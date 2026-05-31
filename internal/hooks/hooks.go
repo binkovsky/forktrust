@@ -133,7 +133,18 @@ func doCommand(h config.Hook, ctx Context, stdout, stderr io.Writer) (Result, er
 		workDir = filepath.Join(ctx.Path, h.WorkDir)
 	}
 
-	cmd := exec.Command("sh", "-c", expanded)
+	// Auto-source the worktree's .env.local (if any) so command hooks see
+	// PORT and friends without needing to write `source .env.local`
+	// themselves. The `set -a; ... set +a` pattern exports each variable.
+	// Errors sourcing are swallowed (2>/dev/null) so a missing file is fine.
+	envLocal := filepath.Join(ctx.Path, ".env.local")
+	preamble := ""
+	if _, err := os.Stat(envLocal); err == nil {
+		// Quote the path so spaces / specials in worktree paths are safe.
+		preamble = "set -a; . " + shellQuote(envLocal) + " >/dev/null 2>&1; set +a; "
+	}
+
+	cmd := exec.Command("sh", "-c", preamble+expanded)
 	cmd.Dir = workDir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -149,6 +160,15 @@ func doCommand(h config.Hook, ctx Context, stdout, stderr io.Writer) (Result, er
 		return Result{Type: h.Type, Summary: summary, Err: err}, err
 	}
 	return Result{Type: h.Type, Summary: summary}, nil
+}
+
+// shellQuote wraps s in single quotes, escaping any embedded single quote so
+// the result is safe to paste into a POSIX sh command line.
+func shellQuote(s string) string {
+	if !strings.ContainsAny(s, " \t\n'\"\\$`!*?[](){}<>|&;#~=") {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // expand applies text/template with strict missingkey behavior — a template

@@ -96,6 +96,10 @@ func Allocate(storePath string, opts AllocOpts) (Block, error) {
 		if err != nil {
 			return err
 		}
+		// Sweep blocks whose worktree directories no longer exist. Keeps
+		// ports.json from leaking when users remove worktrees externally
+		// (e.g. `git worktree remove` bypassing `forktrust rm`).
+		store.PruneOrphans()
 		if i := store.findBlock(opts.Repo, opts.Slug); i >= 0 {
 			allocated = store.Blocks[i]
 			return nil

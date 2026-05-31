@@ -95,3 +95,40 @@ func (s *Store) Sorted() []Block {
 	sort.Slice(out, func(i, j int) bool { return out[i].Start < out[j].Start })
 	return out
 }
+
+// PruneOrphans drops any block whose worktree directory is provably gone.
+// Returns the count removed. Used by Allocate to keep the store from
+// accumulating dead allocations after `git worktree remove` (or any other
+// external removal that bypasses `forktrust rm`).
+//
+// Defensive: only drops on os.ErrNotExist. Permission errors, transient IO
+// errors, and other Stat failures KEEP the block — we'd rather leak a port
+// than orphan a user's allocation because of a flaky disk. Also keeps blocks
+// whose repo root itself is unreachable (the parent missing covers e.g. an
+// unmounted volume, where the user expects their allocations to come back
+// when the disk is back).
+func (s *Store) PruneOrphans() int {
+	kept := s.Blocks[:0]
+	dropped := 0
+	for _, b := range s.Blocks {
+		// If the repo root itself is unreachable, keep the block (probably
+		// a mounted volume that's offline, not a real removal).
+		if _, err := os.Stat(b.Repo); err != nil {
+			kept = append(kept, b)
+			continue
+		}
+		path := filepath.Join(b.Repo, ".forktrust", "worktrees", b.Slug)
+		_, err := os.Stat(path)
+		switch {
+		case err == nil:
+			kept = append(kept, b)
+		case os.IsNotExist(err):
+			dropped++
+		default:
+			// Any other error: be safe, keep the block.
+			kept = append(kept, b)
+		}
+	}
+	s.Blocks = kept
+	return dropped
+}

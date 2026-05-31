@@ -9,6 +9,12 @@ import (
 	"testing"
 )
 
+// Some existing tests use fake repo paths like "/r". For those, the orphan
+// pruner inside Allocate now drops blocks whose repo is unreachable. To keep
+// the older tests valid without rewriting them all, we ensure /r exists as
+// a real temp dir tree for the duration of the test process. This is only
+// needed because the original tests precede the orphan-prune feature.
+
 func storePath(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), "ports.json")
@@ -118,7 +124,15 @@ func TestAllocate_ConcurrentNoOverlap(t *testing.T) {
 	// Race-safety: N goroutines each allocate for unique slugs against the
 	// same store. With flock working, no two blocks should overlap.
 	p := storePath(t)
+	// Create real worktree dirs so PruneOrphans (called from Allocate)
+	// keeps each block alive instead of treating them as ghosts.
+	repo := t.TempDir()
 	const n = 20
+	for i := 0; i < n; i++ {
+		if err := os.MkdirAll(filepath.Join(repo, ".forktrust", "worktrees", fmt.Sprintf("slug-%d", i)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	var wg sync.WaitGroup
 	blocks := make([]Block, n)
@@ -127,7 +141,7 @@ func TestAllocate_ConcurrentNoOverlap(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			blocks[i], errs[i] = Allocate(p, DefaultOpts("/r", fmt.Sprintf("slug-%d", i)))
+			blocks[i], errs[i] = Allocate(p, DefaultOpts(repo, fmt.Sprintf("slug-%d", i)))
 		}(i)
 	}
 	wg.Wait()

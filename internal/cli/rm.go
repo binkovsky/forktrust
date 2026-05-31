@@ -142,6 +142,10 @@ func runRm(_ *cobra.Command, args []string) error {
 
 func previewRm(r rmResult, wipBranch, mainPath string) error {
 	hasOrigin := git.HasOrigin(r.WorktreePath)
+	// In --json mode emit ONLY the JSON document.
+	if rmJSON {
+		return emitRm(r)
+	}
 	fmt.Printf("DRY-RUN: rm %s\n", r.Slug)
 	fmt.Printf("  project:       %s\n", r.Project)
 	fmt.Printf("  worktree:      %s\n", r.WorktreePath)

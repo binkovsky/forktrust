@@ -203,6 +203,11 @@ func previewFinish(r finishResult, mainBranch, mainPath string) error {
 	r.CommitsAhead = ahead
 	mainDirty, _ := git.DirtyCount(mainPath)
 	r.MainDirty = mainDirty
+	// In --json mode emit ONLY the JSON document; the human-readable preview
+	// would otherwise corrupt the stdout document.
+	if finishJSON {
+		return emitFinish(r)
+	}
 	fmt.Printf("DRY-RUN: %s\n", r.Slug)
 	fmt.Printf("  project:        %s\n", r.Project)
 	fmt.Printf("  worktree:       %s\n", r.WorktreePath)
