@@ -44,14 +44,15 @@ type rmResult struct {
 
 // newResult is the stable JSON schema for `forktrust new [--json]`.
 type newResult struct {
-	Project        string   `json:"project"`
-	Slug           string   `json:"slug"`
-	WorktreePath   string   `json:"worktree_path"`
-	Branch         string   `json:"branch"`
-	BranchReused   bool     `json:"branch_reused"`
-	EnvFilesCopied int      `json:"env_files_copied"`
-	HooksRun       []string `json:"hooks_run,omitempty"`
-	Ports          []int    `json:"ports,omitempty"`
+	Project           string   `json:"project"`
+	Slug              string   `json:"slug"`
+	WorktreePath      string   `json:"worktree_path"`
+	Branch            string   `json:"branch"`
+	BranchReused      bool     `json:"branch_reused"`
+	EnvFilesCopied    int      `json:"env_files_copied"`
+	HooksRun          []string `json:"hooks_run,omitempty"`
+	Ports             []int    `json:"ports,omitempty"`
+	PredictedOverlaps []string `json:"predicted_overlaps,omitempty"`
 }
 
 // listResult is the stable JSON schema for `forktrust list [--json]`.

@@ -104,6 +104,57 @@ func CommitsAhead(wt, refspec string) (int, error) {
 	return n, nil
 }
 
+// CommitsBehind returns the number of commits on the given refspec that are ahead of HEAD.
+func CommitsBehind(wt, refspec string) (int, error) {
+	out, err := Run(wt, "rev-list", "--count", "HEAD.."+refspec)
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	if _, err := fmt.Sscanf(out, "%d", &n); err != nil {
+		return 0, fmt.Errorf("parse rev-list count %q: %w", out, err)
+	}
+	return n, nil
+}
+
+// ChangedFiles returns the union of:
+//  1. files committed on HEAD that are ahead of refspec, and
+//  2. files modified or untracked in the worktree (status --porcelain).
+//
+// Used by edit-prediction to surface which files are "in play" in a given worktree.
+func ChangedFiles(wt, refspec string) ([]string, error) {
+	set := map[string]struct{}{}
+	// 1. committed-since-fork
+	if out, err := Run(wt, "diff", "--name-only", refspec+"...HEAD"); err == nil && out != "" {
+		for _, line := range strings.Split(out, "\n") {
+			if line != "" {
+				set[line] = struct{}{}
+			}
+		}
+	}
+	// 2. uncommitted (modified, added, untracked — exclude deleted)
+	if out, err := Run(wt, "status", "--porcelain"); err == nil {
+		for _, line := range strings.Split(out, "\n") {
+			if len(line) < 4 {
+				continue
+			}
+			// Format: "XY path" or "XY orig -> new"
+			path := strings.TrimSpace(line[3:])
+			if idx := strings.LastIndex(path, " -> "); idx >= 0 {
+				path = strings.TrimSpace(path[idx+4:])
+			}
+			if path != "" {
+				set[path] = struct{}{}
+			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	return out, nil
+}
+
 // HasOrigin returns true if an "origin" remote is configured in the repo.
 func HasOrigin(repo string) bool {
 	_, err := Run(repo, "remote", "get-url", "origin")

@@ -13,6 +13,7 @@ import (
 	"github.com/binkovsky/forktrust/internal/git"
 	"github.com/binkovsky/forktrust/internal/hooks"
 	"github.com/binkovsky/forktrust/internal/ports"
+	"github.com/binkovsky/forktrust/internal/predict"
 )
 
 var (
@@ -190,6 +191,22 @@ func runNew(_ *cobra.Command, args []string) error {
 		r.HooksRun = append(r.HooksRun, "install:"+installCmd)
 	} else if proj.InstallCmd != "" && repoCfg == nil {
 		newf("skipping install (use --install to run: %s)", proj.InstallCmd)
+	}
+
+	// Cross-worktree edit prediction: warn if other active worktrees are
+	// touching files that this one will likely touch too. Heuristic — does
+	// NOT block creation; informational only.
+	mainBranch := proj.MainBranch
+	if mainBranch == "" {
+		mainBranch = "main"
+	}
+	if overlaps, perr := predict.Active(proj.Path, mainBranch, slug); perr == nil && len(overlaps) > 0 {
+		if !newJSON {
+			fmt.Fprint(os.Stderr, predict.FormatWarning(overlaps, 5))
+		}
+		for _, o := range overlaps {
+			r.PredictedOverlaps = append(r.PredictedOverlaps, o.File)
+		}
 	}
 
 	if !newJSON {
