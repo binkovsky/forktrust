@@ -94,7 +94,11 @@ func runFinish(_ *cobra.Command, args []string) error {
 	}
 	r.UncommittedFiles = dirty
 
-	_, _ = git.Run(proj.Path, "fetch", "-q", "origin", mainBranch)
+	// Only fetch if we have origin; otherwise rev-list against origin/main
+	// would crash with "ambiguous argument" downstream.
+	if git.HasOrigin(proj.Path) {
+		_, _ = git.Run(proj.Path, "fetch", "-q", "origin", mainBranch)
+	}
 
 	if finishDryRun {
 		return previewFinish(r, mainBranch, proj.Path)
@@ -118,14 +122,21 @@ func runFinish(_ *cobra.Command, args []string) error {
 		r.CommittedWIP = true
 	}
 
-	// 2. How many commits ahead of origin/<main>?
-	ahead, err := git.CommitsAhead(wtPath, "origin/"+mainBranch)
+	// 2. How many commits ahead of mainBranch? Use origin/<main> if origin
+	// exists (matches what `git push` would compare against); else use local
+	// <main> ref (no-origin / offline path).
+	hasOrigin := git.HasOrigin(proj.Path)
+	aheadRef := "origin/" + mainBranch
+	if !hasOrigin {
+		aheadRef = mainBranch
+	}
+	ahead, err := git.CommitsAhead(wtPath, aheadRef)
 	if err != nil {
 		return err
 	}
 	r.CommitsAhead = ahead
 	if ahead == 0 {
-		notef("branch %s has no commits ahead of origin/%s, nothing to merge", branch, mainBranch)
+		notef("branch %s has no commits ahead of %s, nothing to merge", branch, aheadRef)
 		if err := removeWorktree(finishJSON, proj.Path, wtPath, false); err != nil {
 			return err
 		}
@@ -134,9 +145,24 @@ func runFinish(_ *cobra.Command, args []string) error {
 		r.BranchDeleted = true
 		return emitFinish(r)
 	}
-	notef("branch is %d commit(s) ahead of origin/%s, merging", ahead, mainBranch)
+	notef("branch is %d commit(s) ahead of %s, merging", ahead, aheadRef)
 
-	// 3. Main checkout must be clean to safely merge into it.
+	// 3. Main checkout must be ON mainBranch — otherwise we'd merge into
+	// whatever HEAD happens to be (e.g. dev), pretending we shipped to main.
+	current, err := git.CurrentBranch(proj.Path)
+	if err != nil {
+		return err
+	}
+	if current != mainBranch {
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintf(os.Stderr, "REFUSE: main checkout at %s is on branch %q, expected %q.\n", proj.Path, current, mainBranch)
+		fmt.Fprintln(os.Stderr, "Merging now would land your work on the wrong branch and lie about success.")
+		fmt.Fprintf(os.Stderr, "Switch first:\n  git -C %s checkout %s\n", proj.Path, mainBranch)
+		fmt.Fprintln(os.Stderr, "Then re-run forktrust finish.")
+		return coded(ExitMainOnWrongBranch, fmt.Errorf("main checkout on %q, expected %q", current, mainBranch))
+	}
+
+	// 4. Main checkout must be clean to safely merge into it.
 	mainDirty, err := git.DirtyCount(proj.Path)
 	if err != nil {
 		return err
@@ -149,12 +175,14 @@ func runFinish(_ *cobra.Command, args []string) error {
 		return coded(ExitDirtyMain, fmt.Errorf("main worktree is dirty (%d files)", mainDirty))
 	}
 
-	// 4. Fast-forward main to origin/main.
-	if err := gitStream(finishJSON, proj.Path, "pull", "--ff-only", "origin", mainBranch); err != nil {
-		return coded(ExitPushFailed, fmt.Errorf("pull --ff-only failed: %w", err))
+	// 5. Fast-forward main to origin/main (only if we have origin).
+	if hasOrigin {
+		if err := gitStream(finishJSON, proj.Path, "pull", "--ff-only", "origin", mainBranch); err != nil {
+			return coded(ExitPushFailed, fmt.Errorf("pull --ff-only failed: %w", err))
+		}
 	}
 
-	// 5. Merge the worktree branch. --no-ff keeps it visible in history.
+	// 6. Merge the worktree branch. --no-ff keeps it visible in history.
 	notef("merging %s into %s", branch, mainBranch)
 	if err := gitStream(finishJSON, proj.Path, "merge", "--no-ff", "--no-edit", branch); err != nil {
 		_, _ = git.Run(proj.Path, "merge", "--abort")
@@ -168,8 +196,8 @@ func runFinish(_ *cobra.Command, args []string) error {
 	}
 	r.Merged = true
 
-	// 6. Push main.
-	if git.HasOrigin(proj.Path) {
+	// 7. Push main.
+	if hasOrigin {
 		notef("pushing %s to origin", mainBranch)
 		if err := gitStream(finishJSON, proj.Path, "push", "origin", mainBranch); err != nil {
 			return coded(ExitPushFailed, fmt.Errorf("push failed (auth? non-fast-forward?): %w", err))

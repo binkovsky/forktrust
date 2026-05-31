@@ -21,18 +21,18 @@ var (
 
 var aiCmd = &cobra.Command{
 	Use:   "ai <slug>",
-	Short: "Launch an AI coding tool inside the worktree (creates it if needed)",
+	Short: "Launch an AI coding tool inside an existing worktree",
 	Long: `Launch a configured AI tool (claude, codex, cursor, aider, gemini,
 copilot, continue, opencode, auggie) inside a forktrust worktree.
 
-If the worktree for <slug> doesn't exist yet, it is created first via the
-same code path as ` + "`forktrust new <slug>`" + ` (hooks + ports + .env files).
+The worktree must already exist — run ` + "`forktrust new <slug>`" + ` first.
+` + "`ai`" + ` does not create worktrees so that hook/port behavior stays in one place.
 
 Examples:
-  forktrust ai my-task                       # uses configured default tool
-  forktrust ai my-task --tool claude         # override per-invocation
-  forktrust ai --set-default claude          # set ai.default in ~/.config/forktrust/config.toml
-  forktrust ai --list                        # show supported adapters
+  forktrust new my-task && forktrust ai my-task   # full flow
+  forktrust ai my-task --tool claude              # override per-invocation
+  forktrust ai --set-default claude               # save ai.default in user config
+  forktrust ai --list                             # show supported adapters
 
 Tool selection precedence:
   1. --tool flag

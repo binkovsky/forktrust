@@ -124,7 +124,7 @@ Any future edit to `.forktrustconfig` auto-revokes trust until you re-run `forkt
 | `forktrust config add <path>` | Register a repo with forktrust |
 | `forktrust agent-docs` | Print AGENTS.md snippet to teach an AI agent how to use this |
 
-All commands support `--json` for machine-readable output and `--dry-run` (where mutating) to preview without executing.
+The mutating + listing commands (`new`, `list`, `status`, `finish`, `rm`) support `--json` for machine-readable output. `finish` and `rm` also accept `--dry-run` to preview without executing. `config`, `trust`, `exec`, `ai`, `agent-docs` are human-text-only.
 
 ## Stable exit codes
 
@@ -171,11 +171,14 @@ Hard differentiators (no verified competitor offers these):
 
 ## Roadmap
 
-- `forktrust exec <slug> -- <cmd>` (cross-worktree command runner; gwq has this)
-- `forktrust status --watch` (auto-refresh dashboard; gwq has this)
-- Cross-worktree edit prediction (warn on `new` if files are actively edited elsewhere)
+Shipped in v0.5+: `exec`, `status --watch`, cross-worktree edit prediction, AI adapter, `agent-docs`.
+
+Open:
+
 - MCP server (`forktrust mcp`) so AI agents can call worktree ops as native tools
-- Claude Code plugin (slash commands + skill + hook) in sister repo
+- Claude Code plugin (slash commands + skill + hook) in a sister repo
+- `--no-hooks` ergonomics (per-hook opt-in/out instead of all-or-nothing)
+- Windows flock fallback (currently no-op, accepts allocation race)
 
 ## Test coverage
 

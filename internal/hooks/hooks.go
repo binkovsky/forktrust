@@ -63,9 +63,15 @@ func runOne(h config.Hook, ctx Context, stdout, stderr io.Writer) (Result, error
 }
 
 func doCopy(h config.Hook, ctx Context) (Result, error) {
-	src := filepath.Join(ctx.MainPath, h.From)
-	dst := filepath.Join(ctx.Path, h.To)
 	summary := fmt.Sprintf("copy %s -> %s", h.From, h.To)
+	src, err := secureJoin(ctx.MainPath, h.From)
+	if err != nil {
+		return Result{Type: h.Type, Summary: summary, Err: err}, fmt.Errorf("copy from %q: %w", h.From, err)
+	}
+	dst, err := secureJoin(ctx.Path, h.To)
+	if err != nil {
+		return Result{Type: h.Type, Summary: summary, Err: err}, fmt.Errorf("copy to %q: %w", h.To, err)
+	}
 	info, err := os.Stat(src)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -86,9 +92,15 @@ func doCopy(h config.Hook, ctx Context) (Result, error) {
 }
 
 func doSymlink(h config.Hook, ctx Context) (Result, error) {
-	src := filepath.Join(ctx.MainPath, h.From)
-	dst := filepath.Join(ctx.Path, h.To)
 	summary := fmt.Sprintf("symlink %s -> %s", h.To, h.From)
+	src, err := secureJoin(ctx.MainPath, h.From)
+	if err != nil {
+		return Result{Type: h.Type, Summary: summary, Err: err}, fmt.Errorf("symlink from %q: %w", h.From, err)
+	}
+	dst, err := secureJoin(ctx.Path, h.To)
+	if err != nil {
+		return Result{Type: h.Type, Summary: summary, Err: err}, fmt.Errorf("symlink to %q: %w", h.To, err)
+	}
 	if _, err := os.Stat(src); err != nil {
 		if os.IsNotExist(err) {
 			return Result{Type: h.Type, Summary: summary + " (skipped: source missing)", Skipped: true}, nil

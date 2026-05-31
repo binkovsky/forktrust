@@ -66,6 +66,28 @@ func runRm(_ *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Count commits the branch has that are NOT on origin/<mainBranch> (or
+	// local mainBranch if no origin). These would be SILENTLY LOST by a
+	// plain `git worktree remove` + `branch -D`, so we treat them as work
+	// to snapshot just like uncommitted dirty files.
+	mainBranch := proj.MainBranch
+	if mainBranch == "" {
+		mainBranch = "main"
+	}
+	hasOrigin := git.HasOrigin(wtPath)
+	aheadRef := "origin/" + mainBranch
+	if !hasOrigin {
+		aheadRef = mainBranch
+	}
+	ahead := 0
+	if branch != "" {
+		// Best-effort: ignore error (e.g. ref unknown means branch is
+		// effectively isolated, treat as ahead=0 — user can use --force).
+		if n, err := git.CommitsAhead(wtPath, aheadRef); err == nil {
+			ahead = n
+		}
+	}
+
 	stamp := time.Now().Format("20060102")
 	wipBranch := fmt.Sprintf("wip/%s-%s", strings.TrimPrefix(branch, "fork/"), stamp)
 
@@ -85,18 +107,24 @@ func runRm(_ *cobra.Command, args []string) error {
 
 	rmf("target: %s (branch %s in %s)", wtPath, branch, proj.Name)
 
-	if dirty > 0 && !rmForce {
-		rmf("%d uncommitted change(s), committing + pushing as %s", dirty, wipBranch)
-		if _, err := git.Run(wtPath, "add", "-A"); err != nil {
-			return err
+	// Snapshot path triggers on EITHER uncommitted changes OR committed-but-
+	// -unpushed commits ahead of main. This closes the never-lose-WIP gap.
+	if (dirty > 0 || ahead > 0) && !rmForce {
+		if dirty > 0 {
+			rmf("%d uncommitted change(s), committing + pushing as %s", dirty, wipBranch)
+			if _, err := git.Run(wtPath, "add", "-A"); err != nil {
+				return err
+			}
+			commitMsg := "WIP snapshot before worktree removal (" + time.Now().Format("2006-01-02") + ")"
+			if err := gitStream(rmJSON, wtPath, "commit", "-m", commitMsg); err != nil {
+				return coded(ExitHookFailed, fmt.Errorf("WIP commit failed (pre-commit hook?): %w. Use --force to drop the WIP", err))
+			}
+		} else {
+			rmf("0 uncommitted but %d commit(s) ahead of %s — pushing as %s", ahead, aheadRef, wipBranch)
 		}
-		commitMsg := "WIP snapshot before worktree removal (" + time.Now().Format("2006-01-02") + ")"
-		if err := gitStream(rmJSON, wtPath, "commit", "-m", commitMsg); err != nil {
-			return coded(ExitHookFailed, fmt.Errorf("WIP commit failed (pre-commit hook?): %w. Use --force to drop the WIP", err))
-		}
-		if !git.HasOrigin(wtPath) {
-			fmt.Fprintln(os.Stderr, "REFUSE: no origin remote, WIP commit would only be local.")
-			fmt.Fprintln(os.Stderr, "Re-run with --force to remove anyway (keeps local branch with the commit).")
+		if !hasOrigin {
+			fmt.Fprintln(os.Stderr, "REFUSE: no origin remote, WIP would only be local.")
+			fmt.Fprintln(os.Stderr, "Re-run with --force to remove anyway (keeps local branch with the commits).")
 			return coded(ExitNoOriginRemote, fmt.Errorf("no origin remote"))
 		}
 		pushRef := fmt.Sprintf("HEAD:refs/heads/%s", wipBranch)
@@ -121,10 +149,12 @@ func runRm(_ *cobra.Command, args []string) error {
 		_ = ports.Release(storePath, proj.Path, slug)
 	}
 
-	// Only delete the local branch if either: clean from the start, OR WIP was
-	// safely pushed. If we --force'd over a dirty tree, keep the branch so the
-	// pre-removal commit isn't orphaned.
-	if dirty == 0 || r.WipPushed {
+	// Only delete the local branch if either:
+	//   - clean (no dirty AND no unpushed commits) from the start, OR
+	//   - WIP was safely pushed to wip/* on origin.
+	// If we --force'd over real work, keep the branch so commits aren't orphaned.
+	hadWork := dirty > 0 || ahead > 0
+	if !hadWork || r.WipPushed {
 		if branch != "" && git.HasBranch(proj.Path, branch) {
 			if _, err := git.Run(proj.Path, "branch", "-D", branch); err == nil {
 				rmf("deleted local branch %s", branch)

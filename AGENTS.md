@@ -39,10 +39,11 @@ A git-worktree manager that isolates parallel AI coding sessions. Each task gets
 
 ## Machine-readable output
 
-Every command has `--json` for parseable output. Use it when piping to other tools.
+The state-modifying commands have `--json` for parseable output (`new`, `list`, `status`, `finish`, `rm`). `finish` and `rm` also accept `--dry-run`.
 
 ```bash
 forktrust list --json
+forktrust status --json
 forktrust new my-task --json
 forktrust finish my-task --json
 forktrust finish my-task --dry-run    # preview without executing
@@ -61,6 +62,8 @@ forktrust finish my-task --dry-run    # preview without executing
 | 7 | slug matches multiple projects | re-run with `--project <name>` |
 | 8 | hook failed OR untrusted command hook | for untrusted: `forktrust trust` after the user inspects |
 | 9 | no origin remote configured | tell user to add origin or use `--force` knowing the risk |
+| 10 | main checkout on the wrong branch | run `git -C <repo> checkout <mainBranch>` first |
+| 11 | cwd is in an unregistered git repo | run `forktrust config add .` or use `--project` |
 
 ## When NOT to use forktrust
 

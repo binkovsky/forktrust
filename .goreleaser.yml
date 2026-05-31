@@ -45,8 +45,10 @@ changelog:
       - 'Merge pull request'
       - 'Merge branch'
 
-# Homebrew tap shipping is set up in Phase 2 after the first release lands.
-# Will use the current goreleaser homebrew_casks / formula syntax then.
+# Homebrew tap is published at binkovsky/homebrew-forktrust and the formula
+# is bumped manually on each release (Formula/forktrust.rb). Goreleaser-
+# automated tap publishing requires a HOMEBREW_TAP_GITHUB_TOKEN PAT with
+# cross-repo write; defer that until owner adds the secret.
 
 release:
   github:

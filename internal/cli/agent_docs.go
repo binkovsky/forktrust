@@ -65,9 +65,10 @@ copy of the codebase so concurrent agents do not step on each other.
 
 ### Machine-readable output
 
-Every command supports ` + "`--json`" + ` for parseable output:
+The state-modifying commands (` + "`new`" + `, ` + "`list`" + `, ` + "`status`" + `, ` + "`finish`" + `, ` + "`rm`" + `) support ` + "`--json`" + ` for parseable output:
 
 ` + "```bash\n" + `forktrust list --json
+forktrust status --json
 forktrust new my-task --json
 forktrust finish my-task --json
 ` + "```\n" + `
@@ -84,6 +85,8 @@ Exit codes are stable:
 | 7 | slug matches multiple projects (use --project) |
 | 8 | hook failed (or untrusted command hook) |
 | 9 | no origin remote configured |
+| 10 | main checkout is not on mainBranch (run ` + "`git checkout <main>`" + ` first) |
+| 11 | cwd is in an unregistered git repo (run ` + "`forktrust config add .`" + `) |
 
 ### Inspecting state
 
