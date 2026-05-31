@@ -6,6 +6,7 @@ package git
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -28,9 +29,16 @@ func Run(dir string, args ...string) (string, error) {
 // RunStream runs git inheriting the parent's stdout/stderr — for user-visible
 // operations like merge/push/commit where we want git's own output passed through.
 func RunStream(dir string, args ...string) error {
+	return RunStreamTo(dir, os.Stdout, os.Stderr, args...)
+}
+
+// RunStreamTo runs git directing stdout/stderr to the given writers. Use this
+// when emitting JSON on stdout — pass os.Stderr for both so git's chatter
+// doesn't pollute the JSON document.
+func RunStreamTo(dir string, stdout, stderr io.Writer, args ...string) error {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	return cmd.Run()
 }

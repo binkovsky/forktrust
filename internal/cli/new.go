@@ -15,6 +15,7 @@ import (
 var (
 	newInstall bool
 	newProject string
+	newJSON    bool
 )
 
 var newCmd = &cobra.Command{
@@ -23,8 +24,13 @@ var newCmd = &cobra.Command{
 	Long: `Create a new git worktree at .forktrust/worktrees/<slug> on branch fork/<slug>.
 
 The worktree is isolated from the main checkout, so parallel AI sessions can
-each have their own without stepping on each other. Copies any .env / .env.local /
-.env.development / .env.production from the main checkout if present.`,
+each have their own without stepping on each other. By default copies any
+.env / .env.local / .env.development / .env.production files from the main
+checkout. For declarative copy/symlink/command hooks, use a .forktrustconfig
+file at the repo root (see "forktrust config schema" for details).
+
+Auto-adds .forktrust/ to .git/info/exclude (local-only, never touches the
+project's tracked .gitignore).`,
 	Args: cobra.ExactArgs(1),
 	RunE: runNew,
 }
@@ -32,6 +38,7 @@ each have their own without stepping on each other. Copies any .env / .env.local
 func init() {
 	newCmd.Flags().BoolVar(&newInstall, "install", false, "run the project's install command after creating the worktree")
 	newCmd.Flags().StringVarP(&newProject, "project", "p", "", "target project name (required if more than one is registered)")
+	newCmd.Flags().BoolVar(&newJSON, "json", false, "emit a structured JSON result on stdout (one object)")
 }
 
 func runNew(_ *cobra.Command, args []string) error {
@@ -54,26 +61,37 @@ func runNew(_ *cobra.Command, args []string) error {
 	}
 
 	// Make sure .forktrust/ stays out of `git status` for the main checkout.
-	// Uses .git/info/exclude (local-only, not committed).
+	// Uses .git/info/exclude (local-only, never committed).
 	if err := git.EnsureLocalExclude(proj.Path, ".forktrust/"); err != nil {
-		fmt.Fprintf(os.Stderr, "warn: could not update .git/info/exclude: %v\n", err)
+		if !newJSON {
+			fmt.Fprintf(os.Stderr, "warn: could not update .git/info/exclude: %v\n", err)
+		}
+	}
+
+	r := newResult{
+		Project:      proj.Name,
+		Slug:         slug,
+		WorktreePath: wtPath,
+		Branch:       branch,
 	}
 
 	if git.HasBranch(proj.Path, branch) {
-		fmt.Printf("==> branch %s exists, reusing\n", branch)
-		if err := git.AddWorktreeExistingBranch(proj.Path, wtPath, branch); err != nil {
+		newf("branch %s exists, reusing", branch)
+		r.BranchReused = true
+		if err := addWorktreeExisting(newJSON, proj.Path, wtPath, branch); err != nil {
 			return fmt.Errorf("worktree add: %w", err)
 		}
 	} else {
-		fmt.Printf("==> creating worktree %s on new branch %s (from current HEAD)\n", wtPath, branch)
-		if err := git.AddWorktreeNewBranch(proj.Path, wtPath, branch); err != nil {
+		newf("creating worktree %s on new branch %s (from current HEAD)", wtPath, branch)
+		if err := addWorktreeNew(newJSON, proj.Path, wtPath, branch); err != nil {
 			return fmt.Errorf("worktree add: %w", err)
 		}
 	}
 
 	copied := copyDotEnvFiles(proj.Path, wtPath)
+	r.EnvFilesCopied = copied
 	if copied > 0 {
-		fmt.Printf("==> copied %d .env file(s) into worktree\n", copied)
+		newf("copied %d .env file(s) into worktree", copied)
 	}
 
 	if newInstall {
@@ -81,20 +99,30 @@ func runNew(_ *cobra.Command, args []string) error {
 		if installCmd == "" {
 			installCmd = "npm install"
 		}
-		fmt.Printf("==> running install: %s\n", installCmd)
+		newf("running install: %s", installCmd)
 		if err := runShell(wtPath, installCmd); err != nil {
 			return fmt.Errorf("install failed: %w", err)
 		}
+		r.HooksRun = append(r.HooksRun, "install:"+installCmd)
 	} else if proj.InstallCmd != "" {
-		fmt.Printf("==> skipping install (use --install to run: %s)\n", proj.InstallCmd)
+		newf("skipping install (use --install to run: %s)", proj.InstallCmd)
 	}
 
-	fmt.Println()
-	fmt.Println("Worktree ready:")
-	fmt.Printf("  path:   %s\n", wtPath)
-	fmt.Printf("  branch: %s\n", branch)
-	fmt.Printf("  cd %s\n", wtPath)
-	return nil
+	if !newJSON {
+		fmt.Println()
+		fmt.Println("Worktree ready:")
+		fmt.Printf("  path:   %s\n", wtPath)
+		fmt.Printf("  branch: %s\n", branch)
+		fmt.Printf("  cd %s\n", wtPath)
+	}
+	return emitNew(r)
+}
+
+func newf(format string, args ...interface{}) {
+	if newJSON {
+		return
+	}
+	fmt.Printf("==> "+format+"\n", args...)
 }
 
 // selectProject picks the project to operate on:

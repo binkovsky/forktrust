@@ -15,12 +15,14 @@ import (
 var (
 	finishMessage string
 	finishProject string
+	finishDryRun  bool
+	finishJSON    bool
 )
 
 var finishCmd = &cobra.Command{
 	Use:   "finish <slug>",
 	Short: "Commit WIP, merge to main, push, remove worktree (refuses on conflict)",
-	Long: `Canonical end-of-chat command:
+	Long: `Canonical end-of-task command. Pipeline:
 
   1. commits any uncommitted WIP on the worktree branch
   2. fetches origin/main, fast-forward-pulls the main checkout
@@ -28,8 +30,20 @@ var finishCmd = &cobra.Command{
   4. pushes main to origin
   5. removes the worktree and branch
 
-Refuses on merge conflict (never auto-resolves) and refuses if the main
-checkout has uncommitted changes (would risk losing the owner's WIP).`,
+Hard safety guarantees:
+
+  * REFUSES on merge conflict. Never auto-resolves, never uses --strategy
+    ours/theirs. Aborts the merge and tells you what to inspect.
+  * REFUSES if the main checkout has uncommitted changes. Will not risk
+    overwriting work that is not yours.
+
+Exit codes:
+  0  success
+  2  merge conflict (refuse to auto-resolve)
+  3  main worktree is dirty
+  4  push to origin failed
+  6  no worktree matching slug
+  7  slug matches worktrees in multiple projects`,
 	Args: cobra.ExactArgs(1),
 	RunE: runFinish,
 }
@@ -37,6 +51,8 @@ checkout has uncommitted changes (would risk losing the owner's WIP).`,
 func init() {
 	finishCmd.Flags().StringVarP(&finishMessage, "message", "m", "", "commit message for uncommitted WIP (default \"WIP: <slug>\")")
 	finishCmd.Flags().StringVarP(&finishProject, "project", "p", "", "target project name (required if more than one is registered)")
+	finishCmd.Flags().BoolVar(&finishDryRun, "dry-run", false, "print the plan without executing anything")
+	finishCmd.Flags().BoolVar(&finishJSON, "json", false, "emit a structured JSON result on stdout (one object)")
 }
 
 func runFinish(_ *cobra.Command, args []string) error {
@@ -54,106 +70,179 @@ func runFinish(_ *cobra.Command, args []string) error {
 		return err
 	}
 	if branch == "" {
-		return fmt.Errorf("worktree at %s is detached — finish needs a branch", wtPath)
+		return fmt.Errorf("worktree at %s is detached, finish needs a branch", wtPath)
 	}
 
-	fmt.Printf("==> finish target: %s (branch %s in %s)\n", wtPath, branch, proj.Name)
-
-	// 1. Commit any uncommitted WIP on the worktree branch.
-	dirty, err := git.DirtyCount(wtPath)
-	if err != nil {
-		return err
-	}
-	if dirty > 0 {
-		msg := finishMessage
-		if msg == "" {
-			msg = "WIP: " + slug
-		}
-		fmt.Printf("==> %d uncommitted change(s) — committing to %s (%q)\n", dirty, branch, msg)
-		if _, err := git.Run(wtPath, "add", "-A"); err != nil {
-			return err
-		}
-		if err := git.RunStream(wtPath, "commit", "-m", msg); err != nil {
-			return fmt.Errorf("commit failed (pre-commit hook?): %w", err)
-		}
-	}
-
-	// 2. Resolve main branch name (defaults to "main").
 	mainBranch := proj.MainBranch
 	if mainBranch == "" {
 		mainBranch = "main"
 	}
 
-	// 3. How many commits ahead of origin/<main>?
+	r := finishResult{
+		Project:      proj.Name,
+		Slug:         slug,
+		WorktreePath: wtPath,
+		Branch:       branch,
+		MainBranch:   mainBranch,
+		DryRun:       finishDryRun,
+	}
+
+	dirty, err := git.DirtyCount(wtPath)
+	if err != nil {
+		return err
+	}
+	r.UncommittedFiles = dirty
+
 	_, _ = git.Run(proj.Path, "fetch", "-q", "origin", mainBranch)
+
+	if finishDryRun {
+		return previewFinish(r, mainBranch, proj.Path)
+	}
+
+	notef("finish target: %s (branch %s in %s)", wtPath, branch, proj.Name)
+
+	// 1. Commit any uncommitted WIP on the worktree branch.
+	if dirty > 0 {
+		msg := finishMessage
+		if msg == "" {
+			msg = "WIP: " + slug
+		}
+		notef("%d uncommitted change(s), committing to %s (%q)", dirty, branch, msg)
+		if _, err := git.Run(wtPath, "add", "-A"); err != nil {
+			return err
+		}
+		if err := gitStream(finishJSON, wtPath, "commit", "-m", msg); err != nil {
+			return coded(ExitHookFailed, fmt.Errorf("commit failed (pre-commit hook?): %w", err))
+		}
+		r.CommittedWIP = true
+	}
+
+	// 2. How many commits ahead of origin/<main>?
 	ahead, err := git.CommitsAhead(wtPath, "origin/"+mainBranch)
 	if err != nil {
 		return err
 	}
+	r.CommitsAhead = ahead
 	if ahead == 0 {
-		fmt.Printf("==> branch %s has no commits ahead of origin/%s — nothing to merge\n", branch, mainBranch)
-		if err := git.RemoveWorktree(proj.Path, wtPath, false); err != nil {
+		notef("branch %s has no commits ahead of origin/%s, nothing to merge", branch, mainBranch)
+		if err := removeWorktree(finishJSON, proj.Path, wtPath, false); err != nil {
 			return err
 		}
 		_, _ = git.Run(proj.Path, "branch", "-D", branch)
-		return nil
+		r.WorktreeRemoved = true
+		r.BranchDeleted = true
+		return emitFinish(r)
 	}
-	fmt.Printf("==> branch is %d commit(s) ahead of origin/%s — merging\n", ahead, mainBranch)
+	notef("branch is %d commit(s) ahead of origin/%s, merging", ahead, mainBranch)
 
-	// 4. Main checkout must be clean to safely merge into it.
+	// 3. Main checkout must be clean to safely merge into it.
 	mainDirty, err := git.DirtyCount(proj.Path)
 	if err != nil {
 		return err
 	}
 	if mainDirty > 0 {
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintf(os.Stderr, "ASK OWNER: main working tree in %s has %d uncommitted change(s).\n", proj.Path, mainDirty)
-		fmt.Fprintln(os.Stderr, "Cannot safely merge without overwriting these. Commit/stash them first, then re-run.")
-		return fmt.Errorf("main worktree is dirty")
+		fmt.Fprintf(os.Stderr, "REFUSE: main working tree in %s has %d uncommitted change(s).\n", proj.Path, mainDirty)
+		fmt.Fprintln(os.Stderr, "Cannot safely merge without risking overwrite. Commit/stash them first, then re-run.")
+		fmt.Fprintf(os.Stderr, "Inspect: git -C %s status --short\n", proj.Path)
+		return coded(ExitDirtyMain, fmt.Errorf("main worktree is dirty (%d files)", mainDirty))
 	}
 
-	// 5. Fast-forward main to origin/main.
-	if err := git.RunStream(proj.Path, "pull", "--ff-only", "origin", mainBranch); err != nil {
-		return fmt.Errorf("pull --ff-only failed: %w", err)
+	// 4. Fast-forward main to origin/main.
+	if err := gitStream(finishJSON, proj.Path, "pull", "--ff-only", "origin", mainBranch); err != nil {
+		return coded(ExitPushFailed, fmt.Errorf("pull --ff-only failed: %w", err))
 	}
 
-	// 6. Merge the worktree branch. --no-ff keeps it visible in history.
-	fmt.Printf("==> merging %s into %s\n", branch, mainBranch)
-	if err := git.RunStream(proj.Path, "merge", "--no-ff", "--no-edit", branch); err != nil {
+	// 5. Merge the worktree branch. --no-ff keeps it visible in history.
+	notef("merging %s into %s", branch, mainBranch)
+	if err := gitStream(finishJSON, proj.Path, "merge", "--no-ff", "--no-edit", branch); err != nil {
 		_, _ = git.Run(proj.Path, "merge", "--abort")
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintf(os.Stderr, "ASK OWNER: merge of %s into %s produced conflicts. Merge aborted to leave main clean.\n", branch, mainBranch)
+		fmt.Fprintf(os.Stderr, "REFUSE: merge of %s into %s produced conflicts. Aborted to leave main clean.\n", branch, mainBranch)
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintf(os.Stderr, "Inspect: cd %s && git merge %s\n", proj.Path, branch)
-		fmt.Fprintf(os.Stderr, "Or:      forktrust rm %s   (abandon and snapshot to wip/*)\n", slug)
-		return fmt.Errorf("merge conflict — refuse to auto-resolve")
+		fmt.Fprintf(os.Stderr, "Inspect the conflict:\n  cd %s && git merge %s\n", proj.Path, branch)
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintf(os.Stderr, "Or abandon and snapshot to wip/*:\n  forktrust rm %s\n", slug)
+		return coded(ExitMergeConflict, fmt.Errorf("merge conflict: refuse to auto-resolve"))
 	}
+	r.Merged = true
 
-	// 7. Push main.
+	// 6. Push main.
 	if git.HasOrigin(proj.Path) {
-		fmt.Printf("==> pushing %s to origin\n", mainBranch)
-		if err := git.RunStream(proj.Path, "push", "origin", mainBranch); err != nil {
-			return fmt.Errorf("push failed (auth? non-fast-forward?): %w", err)
+		notef("pushing %s to origin", mainBranch)
+		if err := gitStream(finishJSON, proj.Path, "push", "origin", mainBranch); err != nil {
+			return coded(ExitPushFailed, fmt.Errorf("push failed (auth? non-fast-forward?): %w", err))
 		}
+		r.Pushed = true
 	} else {
-		fmt.Printf("==> no origin remote — %s is up-to-date locally only\n", mainBranch)
+		notef("no origin remote, %s is up-to-date locally only", mainBranch)
 	}
 
-	// 8. Remove the worktree + branch.
-	if err := git.RemoveWorktree(proj.Path, wtPath, false); err != nil {
+	// 7. Remove the worktree + branch.
+	if err := removeWorktree(finishJSON, proj.Path, wtPath, false); err != nil {
 		return err
 	}
+	r.WorktreeRemoved = true
 	if _, err := git.Run(proj.Path, "branch", "-D", branch); err == nil {
-		fmt.Printf("==> deleted local branch %s\n", branch)
+		notef("deleted local branch %s", branch)
+		r.BranchDeleted = true
 	}
 
-	fmt.Println("==> finish done")
-	return nil
+	notef("finish done")
+	return emitFinish(r)
+}
+
+func previewFinish(r finishResult, mainBranch, mainPath string) error {
+	ahead, _ := git.CommitsAhead(r.WorktreePath, "origin/"+mainBranch)
+	r.CommitsAhead = ahead
+	mainDirty, _ := git.DirtyCount(mainPath)
+	r.MainDirty = mainDirty
+	fmt.Printf("DRY-RUN: %s\n", r.Slug)
+	fmt.Printf("  project:        %s\n", r.Project)
+	fmt.Printf("  worktree:       %s\n", r.WorktreePath)
+	fmt.Printf("  branch:         %s\n", r.Branch)
+	fmt.Printf("  main branch:    %s\n", r.MainBranch)
+	fmt.Printf("  uncommitted:    %d file(s)\n", r.UncommittedFiles)
+	fmt.Printf("  ahead of main:  %d commit(s)\n", r.CommitsAhead)
+	fmt.Printf("  main dirty:     %d file(s)%s\n", mainDirty, dirtyWarn(mainDirty))
+	fmt.Println()
+	fmt.Println("Would:")
+	if r.UncommittedFiles > 0 {
+		msg := r.Message
+		if msg == "" {
+			msg = "WIP: " + r.Slug
+		}
+		fmt.Printf("  1. commit %d file(s) to %s as %q\n", r.UncommittedFiles, r.Branch, msg)
+	}
+	fmt.Printf("  2. pull --ff-only origin %s\n", mainBranch)
+	fmt.Printf("  3. merge --no-ff %s into %s\n", r.Branch, mainBranch)
+	fmt.Printf("  4. push %s to origin\n", mainBranch)
+	fmt.Printf("  5. remove worktree %s\n", r.WorktreePath)
+	fmt.Printf("  6. delete local branch %s\n", r.Branch)
+	if mainDirty > 0 {
+		fmt.Println()
+		fmt.Println("WOULD REFUSE: main is dirty. Re-run after committing/stashing main's WIP.")
+	}
+	return emitFinish(r)
+}
+
+func dirtyWarn(n int) string {
+	if n > 0 {
+		return " (would refuse)"
+	}
+	return ""
+}
+
+func notef(format string, args ...interface{}) {
+	if finishJSON {
+		return
+	}
+	fmt.Printf("==> "+format+"\n", args...)
 }
 
 // resolveWorktree finds a worktree by slug, optionally filtered to one project.
-// Returns the project, the worktree path, and an error if there's no match or
-// multiple matches across projects.
+// Returns the project, the worktree path, and a coded error if there's no match
+// or multiple matches across projects.
 func resolveWorktree(cfg *config.Config, projectName, slug string) (*config.Project, string, error) {
 	projects := cfg.AllProjects()
 	type hit struct {
@@ -175,14 +264,14 @@ func resolveWorktree(cfg *config.Config, projectName, slug string) (*config.Proj
 		if projectName != "" {
 			extra = fmt.Sprintf(" in project %q", projectName)
 		}
-		return nil, "", fmt.Errorf("no worktree matching %q%s", slug, extra)
+		return nil, "", coded(ExitNoWorktree, fmt.Errorf("no worktree matching %q%s", slug, extra))
 	}
 	if len(hits) > 1 {
 		names := make([]string, len(hits))
 		for i, h := range hits {
 			names[i] = h.proj.Name
 		}
-		return nil, "", fmt.Errorf("multiple matches — disambiguate with --project (one of: %s)", strings.Join(names, ", "))
+		return nil, "", coded(ExitAmbiguousSlug, fmt.Errorf("multiple matches: disambiguate with --project (one of: %s)", strings.Join(names, ", ")))
 	}
 	return hits[0].proj, hits[0].path, nil
 }

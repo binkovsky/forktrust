@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -14,6 +15,10 @@ func main() {
 	cli.SetVersion(version)
 	if err := cli.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		var coded *cli.CodedError
+		if errors.As(err, &coded) {
+			os.Exit(coded.Code)
+		}
+		os.Exit(cli.ExitGenericError)
 	}
 }
