@@ -102,7 +102,8 @@ func runRm(_ *cobra.Command, args []string) error {
 	}
 
 	if rmDryRun {
-		return previewRm(r, wipBranch, proj.Path)
+		r.CommitsAhead = ahead
+		return previewRm(r, wipBranch, proj.Path, ahead, hasOrigin)
 	}
 
 	rmf("target: %s (branch %s in %s)", wtPath, branch, proj.Name)
@@ -170,9 +171,17 @@ func runRm(_ *cobra.Command, args []string) error {
 	return emitRm(r)
 }
 
-func previewRm(r rmResult, wipBranch, mainPath string) error {
-	hasOrigin := git.HasOrigin(r.WorktreePath)
-	// In --json mode emit ONLY the JSON document.
+func previewRm(r rmResult, wipBranch, mainPath string, ahead int, hasOrigin bool) error {
+	// Mirror actual rm logic: wip-snapshot fires when EITHER uncommitted
+	// files OR commits-ahead exist (and not --force). No-origin without
+	// --force refuses; --force always proceeds.
+	hadWork := r.UncommittedFiles > 0 || ahead > 0
+	wouldSnapshot := hadWork && !r.Force
+	if wouldSnapshot && !hasOrigin {
+		r.WouldRefuse = fmt.Sprintf("no origin remote (exit %d). Re-run with --force to remove anyway.", ExitNoOriginRemote)
+	}
+	r.WouldPushWip = wouldSnapshot && hasOrigin && r.WouldRefuse == ""
+
 	if rmJSON {
 		return emitRm(r)
 	}
@@ -181,29 +190,34 @@ func previewRm(r rmResult, wipBranch, mainPath string) error {
 	fmt.Printf("  worktree:      %s\n", r.WorktreePath)
 	fmt.Printf("  branch:        %s\n", r.Branch)
 	fmt.Printf("  uncommitted:   %d file(s)\n", r.UncommittedFiles)
+	fmt.Printf("  ahead of main: %d commit(s)\n", ahead)
 	fmt.Printf("  force:         %v\n", r.Force)
 	fmt.Printf("  has origin:    %v\n", hasOrigin)
 	fmt.Println()
+	if r.WouldRefuse != "" {
+		fmt.Printf("WOULD REFUSE: %s\n", r.WouldRefuse)
+		return emitRm(r)
+	}
 	fmt.Println("Would:")
-	if r.UncommittedFiles > 0 && !r.Force {
-		fmt.Printf("  1. commit %d file(s) as %q\n", r.UncommittedFiles, "WIP snapshot before worktree removal ...")
-		if hasOrigin {
-			fmt.Printf("  2. push as origin/%s\n", wipBranch)
-		} else {
-			fmt.Println("  2. REFUSE (no origin remote, WIP would be local-only)")
+	step := 1
+	if r.WouldPushWip {
+		if r.UncommittedFiles > 0 {
+			fmt.Printf("  %d. commit %d file(s) as %q\n", step, r.UncommittedFiles, "WIP snapshot before worktree removal ...")
+			step++
 		}
-		fmt.Printf("  3. remove worktree %s\n", r.WorktreePath)
-		fmt.Printf("  4. delete local branch %s\n", r.Branch)
-	} else if r.Force {
-		fmt.Printf("  1. FORCE remove worktree %s (drops %d uncommitted file(s))\n", r.WorktreePath, r.UncommittedFiles)
-		if r.UncommittedFiles == 0 {
-			fmt.Printf("  2. delete local branch %s\n", r.Branch)
-		} else {
-			fmt.Printf("  2. KEEP local branch %s (WIP commit exists locally only)\n", r.Branch)
-		}
+		fmt.Printf("  %d. push to origin/%s (never-lose-WIP snapshot)\n", step, wipBranch)
+		step++
+	}
+	if r.Force && hadWork {
+		fmt.Printf("  %d. FORCE remove worktree %s (drops %d uncommitted, %d ahead-commit(s))\n", step, r.WorktreePath, r.UncommittedFiles, ahead)
 	} else {
-		fmt.Printf("  1. remove worktree %s (clean)\n", r.WorktreePath)
-		fmt.Printf("  2. delete local branch %s\n", r.Branch)
+		fmt.Printf("  %d. remove worktree %s\n", step, r.WorktreePath)
+	}
+	step++
+	if !r.Force || !hadWork || r.WouldPushWip {
+		fmt.Printf("  %d. delete local branch %s\n", step, r.Branch)
+	} else {
+		fmt.Printf("  %d. KEEP local branch %s (work exists locally only)\n", step, r.Branch)
 	}
 	_ = mainPath
 	return emitRm(r)

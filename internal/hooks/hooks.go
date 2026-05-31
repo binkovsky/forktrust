@@ -231,6 +231,17 @@ func copyDir(src, dst string) error {
 			return err
 		}
 		target := filepath.Join(dst, rel)
+		// If this entry is a symlink, refuse to follow it if it escapes the
+		// source root. This protects against tracked symlinks inside the
+		// source directory that point outside (e.g. dir/inner -> ../secret).
+		// Internal symlinks (pointing to another file within src) are still
+		// honored — we copy the resolved content.
+		if info.Mode()&os.ModeSymlink != 0 {
+			if !withinRoot(src, p) {
+				// Skip silently — the entry would have leaked outside src.
+				return nil
+			}
+		}
 		if info.IsDir() {
 			return os.MkdirAll(target, info.Mode().Perm())
 		}

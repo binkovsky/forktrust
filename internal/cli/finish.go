@@ -227,12 +227,27 @@ func runFinish(_ *cobra.Command, args []string) error {
 }
 
 func previewFinish(r finishResult, mainBranch, mainPath string) error {
-	ahead, _ := git.CommitsAhead(r.WorktreePath, "origin/"+mainBranch)
+	// Mirror actual finish logic so the preview never lies about ahead-count,
+	// no-origin behavior, or wrong-branch refusal.
+	hasOrigin := git.HasOrigin(mainPath)
+	r.HasOrigin = hasOrigin
+	aheadRef := "origin/" + mainBranch
+	if !hasOrigin {
+		aheadRef = mainBranch
+	}
+	ahead, _ := git.CommitsAhead(r.WorktreePath, aheadRef)
 	r.CommitsAhead = ahead
 	mainDirty, _ := git.DirtyCount(mainPath)
 	r.MainDirty = mainDirty
-	// In --json mode emit ONLY the JSON document; the human-readable preview
-	// would otherwise corrupt the stdout document.
+	current, _ := git.CurrentBranch(mainPath)
+	r.MainCurrentBranch = current
+
+	if current != mainBranch {
+		r.WouldRefuse = fmt.Sprintf("main checkout on %q, expected %q (exit %d)", current, mainBranch, ExitMainOnWrongBranch)
+	} else if mainDirty > 0 {
+		r.WouldRefuse = fmt.Sprintf("main checkout is dirty (%d uncommitted file(s)) (exit %d)", mainDirty, ExitDirtyMain)
+	}
+
 	if finishJSON {
 		return emitFinish(r)
 	}
@@ -241,28 +256,47 @@ func previewFinish(r finishResult, mainBranch, mainPath string) error {
 	fmt.Printf("  worktree:       %s\n", r.WorktreePath)
 	fmt.Printf("  branch:         %s\n", r.Branch)
 	fmt.Printf("  main branch:    %s\n", r.MainBranch)
+	fmt.Printf("  main HEAD:      %s%s\n", current, wrongBranchWarn(current, mainBranch))
+	fmt.Printf("  has origin:     %v\n", hasOrigin)
 	fmt.Printf("  uncommitted:    %d file(s)\n", r.UncommittedFiles)
-	fmt.Printf("  ahead of main:  %d commit(s)\n", r.CommitsAhead)
+	fmt.Printf("  ahead of %-7s %d commit(s)\n", aheadRef+":", r.CommitsAhead)
 	fmt.Printf("  main dirty:     %d file(s)%s\n", mainDirty, dirtyWarn(mainDirty))
 	fmt.Println()
+	if r.WouldRefuse != "" {
+		fmt.Printf("WOULD REFUSE: %s\n", r.WouldRefuse)
+		return emitFinish(r)
+	}
 	fmt.Println("Would:")
+	step := 1
 	if r.UncommittedFiles > 0 {
 		msg := r.Message
 		if msg == "" {
 			msg = "WIP: " + r.Slug
 		}
-		fmt.Printf("  1. commit %d file(s) to %s as %q\n", r.UncommittedFiles, r.Branch, msg)
+		fmt.Printf("  %d. commit %d file(s) to %s as %q\n", step, r.UncommittedFiles, r.Branch, msg)
+		step++
 	}
-	fmt.Printf("  2. pull --ff-only origin %s\n", mainBranch)
-	fmt.Printf("  3. merge --no-ff %s into %s\n", r.Branch, mainBranch)
-	fmt.Printf("  4. push %s to origin\n", mainBranch)
-	fmt.Printf("  5. remove worktree %s\n", r.WorktreePath)
-	fmt.Printf("  6. delete local branch %s\n", r.Branch)
-	if mainDirty > 0 {
-		fmt.Println()
-		fmt.Println("WOULD REFUSE: main is dirty. Re-run after committing/stashing main's WIP.")
+	if hasOrigin {
+		fmt.Printf("  %d. pull --ff-only origin %s\n", step, mainBranch)
+		step++
 	}
+	fmt.Printf("  %d. merge --no-ff %s into %s\n", step, r.Branch, mainBranch)
+	step++
+	if hasOrigin {
+		fmt.Printf("  %d. push %s to origin\n", step, mainBranch)
+		step++
+	}
+	fmt.Printf("  %d. remove worktree %s\n", step, r.WorktreePath)
+	step++
+	fmt.Printf("  %d. delete local branch %s\n", step, r.Branch)
 	return emitFinish(r)
+}
+
+func wrongBranchWarn(current, want string) string {
+	if current != want {
+		return fmt.Sprintf(" (WRONG — expected %q, would refuse)", want)
+	}
+	return ""
 }
 
 func dirtyWarn(n int) string {

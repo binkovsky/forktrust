@@ -9,21 +9,24 @@ import (
 // AI agents and scripts can rely on these field names not breaking
 // across minor versions.
 type finishResult struct {
-	Project          string `json:"project"`
-	Slug             string `json:"slug"`
-	WorktreePath     string `json:"worktree_path"`
-	Branch           string `json:"branch"`
-	MainBranch       string `json:"main_branch"`
-	DryRun           bool   `json:"dry_run"`
-	Message          string `json:"message,omitempty"`
-	UncommittedFiles int    `json:"uncommitted_files"`
-	CommittedWIP     bool   `json:"committed_wip"`
-	CommitsAhead     int    `json:"commits_ahead"`
-	MainDirty        int    `json:"main_dirty,omitempty"`
-	Merged           bool   `json:"merged"`
-	Pushed           bool   `json:"pushed"`
-	WorktreeRemoved  bool   `json:"worktree_removed"`
-	BranchDeleted    bool   `json:"branch_deleted"`
+	Project           string `json:"project"`
+	Slug              string `json:"slug"`
+	WorktreePath      string `json:"worktree_path"`
+	Branch            string `json:"branch"`
+	MainBranch        string `json:"main_branch"`
+	DryRun            bool   `json:"dry_run"`
+	Message           string `json:"message,omitempty"`
+	UncommittedFiles  int    `json:"uncommitted_files"`
+	CommittedWIP      bool   `json:"committed_wip"`
+	CommitsAhead      int    `json:"commits_ahead"`
+	MainDirty         int    `json:"main_dirty,omitempty"`
+	MainCurrentBranch string `json:"main_current_branch,omitempty"` // dry-run accuracy: actual HEAD of main checkout
+	WouldRefuse       string `json:"would_refuse,omitempty"`        // dry-run: reason actual command would refuse, "" if it would proceed
+	HasOrigin         bool   `json:"has_origin"`
+	Merged            bool   `json:"merged"`
+	Pushed            bool   `json:"pushed"`
+	WorktreeRemoved   bool   `json:"worktree_removed"`
+	BranchDeleted     bool   `json:"branch_deleted"`
 }
 
 // rmResult is the stable JSON schema for `forktrust rm [--json]`.
@@ -35,6 +38,9 @@ type rmResult struct {
 	DryRun           bool   `json:"dry_run"`
 	Force            bool   `json:"force"`
 	UncommittedFiles int    `json:"uncommitted_files"`
+	CommitsAhead     int    `json:"commits_ahead"`          // dry-run accuracy: commits this branch has past main
+	WouldPushWip     bool   `json:"would_push_wip"`         // dry-run: actual rm would snapshot to wip/*
+	WouldRefuse      string `json:"would_refuse,omitempty"` // dry-run: reason actual rm would refuse, "" if it would proceed
 	WipBranch        string `json:"wip_branch,omitempty"`
 	WipPushed        bool   `json:"wip_pushed"`
 	WorktreeRemoved  bool   `json:"worktree_removed"`
