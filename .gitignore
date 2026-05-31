@@ -1,0 +1,26 @@
+# Binaries
+/forktrust
+/dist/
+*.test
+*.out
+
+# Go
+*.exe
+*.dll
+*.so
+*.dylib
+vendor/
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local config / scratch
+.forktrust/
+local.toml
