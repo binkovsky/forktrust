@@ -21,6 +21,13 @@ type Project struct {
 // Config is the full registry.
 type Config struct {
 	Projects []Project `toml:"project"`
+	AI       AIConfig  `toml:"ai,omitempty"`
+}
+
+// AIConfig holds user defaults for the AI adapter system.
+// Lives at top level so `forktrust config set ai.default claude` is intuitive.
+type AIConfig struct {
+	Default string `toml:"default,omitempty"`
 }
 
 // Path returns the canonical config file path.

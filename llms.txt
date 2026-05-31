@@ -1,0 +1,69 @@
+# forktrust
+
+> Safe-by-default git worktree manager for parallel AI coding agents. Refuse-on-conflict merges. Never-lose-WIP guarantee. Per-worktree port allocation. One command (`forktrust agent-docs`) to teach any AI how to use it.
+
+Install: `brew install binkovsky/forktrust/forktrust`
+
+## Core docs
+
+- [README](https://github.com/binkovsky/forktrust/blob/main/README.md): full feature list, install, comparison table vs gtr/gwq/wtp/workz/claude-squad
+- [AGENTS.md](https://github.com/binkovsky/forktrust/blob/main/AGENTS.md): how AI coding agents (Claude Code, Cursor, Aider, Codex) should use the tool
+- [LICENSE](https://github.com/binkovsky/forktrust/blob/main/LICENSE): MIT
+
+## Workflow
+
+The canonical loop, in three commands:
+
+```bash
+forktrust new <slug>      # create isolated worktree at .forktrust/worktrees/<slug>
+# ... edit files there (NOT in main checkout) ...
+forktrust finish <slug>   # commit WIP + merge to main + push + cleanup
+```
+
+To abandon without merging (WIP is snapshotted to `wip/<branch>-YYYYMMDD` on origin first):
+
+```bash
+forktrust rm <slug>
+```
+
+## .forktrustconfig (per-repo, committed)
+
+```toml
+[ports]
+range = "3000-3099"
+size  = 10
+vars  = ["PORT", "NEXT_PUBLIC_PORT"]
+
+[[hooks.post_create]]
+type = "copy"
+from = ".env"
+to   = ".env"
+
+[[hooks.post_create]]
+type = "symlink"
+from = "node_modules"
+to   = "node_modules"
+
+[[hooks.post_create]]
+type = "command"
+run  = "pnpm install"   # requires `forktrust trust`
+```
+
+## Stable exit codes (will not change across releases)
+
+| Code | Meaning |
+|---|---|
+| 0 | success |
+| 2 | merge conflict (refuse to auto-resolve) |
+| 3 | main worktree is dirty |
+| 4 | push failed |
+| 5 | wip/* push failed (worktree NOT removed) |
+| 6 | no worktree matching slug |
+| 7 | slug matches multiple projects |
+| 8 | hook failed or untrusted command hook |
+| 9 | no origin remote configured |
+
+## Releases
+
+- [GitHub Releases](https://github.com/binkovsky/forktrust/releases)
+- [Homebrew tap](https://github.com/binkovsky/homebrew-forktrust)

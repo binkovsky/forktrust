@@ -1,144 +1,186 @@
 # forktrust
 
-> Safe-by-default git worktree manager for parallel AI coding sessions.
-> Refuse-on-conflict merges. Never-lose-WIP guarantee. Works with Claude Code, Cursor, Aider, Cline, Codex — any agent that edits files.
+> **Safe-by-default git worktree manager built for AI coding agents.**
+> Refuse-on-conflict merges. Never-lose-WIP guarantee. Port allocator per worktree. One command to teach any AI agent how to use it.
 
-`forktrust` isolates each AI chat in its own git worktree so parallel sessions never step on each other. When a chat is done, one command commits, merges to main, pushes, and cleans up — and refuses to do anything destructive when the merge isn't safe.
+`forktrust` lets multiple AI coding agents (Claude Code, Cursor, Aider, Codex, Cline, Continue, OpenCode, Gemini, Auggie) work on the same repo in parallel without stepping on each other. Each task gets its own isolated git worktree, its own ports, and its own `.env.local`. When the task is done, one command merges to main, pushes, and cleans up — and refuses to do anything destructive when the merge isn't safe.
 
-```
-$ forktrust new fix-search
-==> creating worktree .forktrust/worktrees/fix-search on new branch fork/fix-search
-
-  cd .forktrust/worktrees/fix-search
-
-# ... agent edits files in that path only ...
-
-$ forktrust finish fix-search
-==> 3 uncommitted change(s) — committing to fork/fix-search ("WIP: fix-search")
-==> branch is 4 commit(s) ahead of origin/main — merging
-==> merging fork/fix-search into main
-==> pushing main to origin
-==> deleted local branch fork/fix-search
-==> finish done
+```bash
+brew install binkovsky/forktrust/forktrust
+forktrust new my-task           # creates isolated worktree
+forktrust ai my-task            # launches your configured AI in it
+# ... agent edits files in the worktree only ...
+forktrust finish my-task        # merge to main + push + cleanup (refuses on conflict)
 ```
 
 ## Why
 
-Parallel AI coding sessions break in predictable ways:
+Parallel AI coding sessions break in predictable ways. `forktrust` is opinionated about the parts where being wrong loses work:
 
-- Two chats edit the same file in the same checkout, one overwrites the other.
-- An agent auto-resolves a merge conflict and silently picks the wrong side.
-- A session ends with uncommitted work, the worktree is removed, the work is gone.
-- Three `npm install` runs collide on `package-lock.json`.
-- Three dev servers fight over port 3000.
+| Failure mode | What forktrust does |
+|---|---|
+| Two agents edit the same checkout, one overwrites the other | Each agent gets its own worktree at `.forktrust/worktrees/<slug>/` |
+| Agent auto-resolves a merge conflict and silently picks the wrong side | `finish` REFUSES on any conflict. No `--strategy ours/theirs`. Ever. |
+| Session ends with uncommitted work; worktree removed; work gone | `rm` ALWAYS pushes to `wip/<branch>-YYYYMMDD` on origin first |
+| Three `pnpm install` runs collide on `pnpm-lock.yaml` | Symlink hook shares `node_modules` from main; install runs once |
+| Three dev servers fight over port 3000 | Per-worktree aligned port block (3000-3009, 3010-3019, ...) auto-written to `.env.local` |
+| Agent edits files in the main checkout by accident | `.forktrust/` auto-added to `.git/info/exclude` (never committed) |
 
-Existing worktree wrappers solve some of this. `forktrust` is opinionated about the parts where being wrong loses work:
+## AI-agent integration in one command
 
-1. **Refuse on merge conflict.** `finish` aborts the merge and asks. No `--strategy ours/theirs`. Ever.
-2. **Refuse on dirty main.** If the main checkout has uncommitted changes, `finish` won't risk overwriting them.
-3. **Never-lose-WIP.** `rm` (abandon) always pushes the current state to `wip/<branch>-YYYYMMDD` on origin before removing anything.
-4. **Local-only exclude.** Auto-adds `.forktrust/` to `.git/info/exclude` so worktree dirs don't pollute the main checkout's `git status`. Nothing committed to the project.
+```bash
+forktrust agent-docs >> AGENTS.md
+# or
+forktrust agent-docs >> CLAUDE.md
+```
+
+This drops a tested, concise integration snippet into your project's agent-facing doc. Claude Code, Cursor, Codex, Aider read it on session start and use forktrust correctly without further setup. Includes the safety guarantees, stable exit codes, and JSON output schema — everything an agent needs to make the right calls.
 
 ## Install
 
-### Homebrew (planned)
-
 ```bash
+# Homebrew (macOS + Linux)
 brew install binkovsky/forktrust/forktrust
-```
 
-### Go install
-
-```bash
+# Go install
 go install github.com/binkovsky/forktrust/cmd/forktrust@latest
+
+# Pre-built binaries
+# https://github.com/binkovsky/forktrust/releases
 ```
-
-### Pre-built binaries
-
-[Releases page](https://github.com/binkovsky/forktrust/releases) (Linux + macOS, amd64 + arm64).
 
 ## Quickstart
 
 ```bash
-# One-time: register a repo
+# One-time: register the repo
 forktrust config add ~/code/my-project
 
-# Start a new task in an isolated worktree
+# Optional: set a default AI tool
+forktrust ai --set-default claude
+
+# For each task
 forktrust new fix-payment-bug
-
-# Worktree is at: ~/code/my-project/.forktrust/worktrees/fix-payment-bug
-# On branch:     fork/fix-payment-bug
 cd ~/code/my-project/.forktrust/worktrees/fix-payment-bug
-
-# ... let your agent edit / build / test ...
-
-# When done: commit + merge + push + cleanup
+# agent does work...
 forktrust finish fix-payment-bug
-
-# Or abandon (saves WIP as wip/fix-payment-bug-YYYYMMDD on origin first):
-forktrust rm fix-payment-bug
 ```
+
+## `.forktrustconfig` — declarative per-repo setup
+
+Drop this at the root of your repo (commit it). On `forktrust new <slug>`, the steps run in order.
+
+```toml
+# Allocate an aligned port block to each worktree.
+# Written to .env.local; auto-released on `finish` / `rm`.
+[ports]
+range = "3000-3099"
+size  = 10
+vars  = ["PORT", "NEXT_PUBLIC_PORT", "SERVER_PORT"]
+
+# Copy gitignored files (envs, local configs) into the new worktree.
+[[hooks.post_create]]
+type = "copy"
+from = ".env"
+to   = ".env"
+
+# Symlink heavy gitignored dirs from main (skips non-empty tracked dirs).
+[[hooks.post_create]]
+type = "symlink"
+from = "node_modules"
+to   = "node_modules"
+
+# Run a shell command. REQUIRES `forktrust trust` to execute.
+# Templates: {{.Slug}} {{.Branch}} {{.Path}} {{.MainPath}} {{.Project}}
+[[hooks.post_create]]
+type = "command"
+run  = "pnpm install"
+# Optional:
+# work_dir = "sub-package"
+# env      = { NODE_ENV = "development" }
+```
+
+### Trust gate (security)
+
+`copy` and `symlink` hooks run freely (just file ops scoped to the worktree). `command` hooks REFUSE until you explicitly trust the config:
+
+```bash
+forktrust trust                  # pin the current SHA-256 of .forktrustconfig
+forktrust trust --list           # see all trusted repos
+forktrust trust --revoke         # remove trust
+```
+
+Any future edit to `.forktrustconfig` auto-revokes trust until you re-run `forktrust trust`. A malicious commit cannot silently inject shell commands.
 
 ## Commands
 
-| Command | Effect |
+| Command | What it does |
 |---|---|
-| `forktrust new <slug> [--install] [-p <project>]` | Create worktree at `.forktrust/worktrees/<slug>` on branch `fork/<slug>`. Copies `.env*` files. |
-| `forktrust list` | Show all worktrees across registered projects, dirty status. |
-| `forktrust finish <slug> [-m "<msg>"] [-p <project>]` | Commit WIP, fast-forward main, merge `--no-ff`, push, remove. Refuses on conflict or dirty main. |
-| `forktrust rm <slug> [--force] [-p <project>]` | Snapshot WIP as `wip/*` on origin, then remove. With `--force`: drop WIP, no push. |
-| `forktrust config add <path> [name]` | Register a git repo. |
-| `forktrust config list` | Show registered repos. |
-| `forktrust config remove <name>` | Drop a repo from the registry. |
-| `forktrust config path` | Print the config file path. |
+| `forktrust new <slug>` | Create worktree at `.forktrust/worktrees/<slug>` on branch `fork/<slug>` |
+| `forktrust list` | All worktrees across all registered repos (use `--json`) |
+| `forktrust finish <slug>` | Commit WIP, merge `--no-ff` to main, push, cleanup. Refuses on conflict |
+| `forktrust rm <slug>` | Abandon, snapshotting WIP to `wip/<branch>-YYYYMMDD` first |
+| `forktrust ai <slug>` | Launch configured AI tool in the worktree |
+| `forktrust trust [path]` | Approve `.forktrustconfig` command hooks for this repo |
+| `forktrust config add <path>` | Register a repo with forktrust |
+| `forktrust agent-docs` | Print AGENTS.md snippet to teach an AI agent how to use this |
 
-If only one repo is registered (or you run inside a git repo with none registered), `-p` is optional.
+All commands support `--json` for machine-readable output and `--dry-run` (where mutating) to preview without executing.
 
-## Configuration
+## Stable exit codes
 
-`forktrust config add` writes to `~/.config/forktrust/config.toml` (or `$XDG_CONFIG_HOME/forktrust/`):
+AI agents and CI scripts can switch on these. They will not change across releases.
 
-```toml
-[[project]]
-name = "my-app"
-path = "/Users/me/code/my-app"
-main_branch = "main"            # optional, defaults to "main"
-install_cmd = "pnpm install"    # optional, used when `new --install`
-```
-
-Run `forktrust` with zero config inside any git repo — it auto-detects the repo as the target.
+| Code | Meaning |
+|---|---|
+| 0 | success |
+| 2 | merge conflict (refuse to auto-resolve) |
+| 3 | main worktree is dirty (refuse to overwrite) |
+| 4 | push to origin failed |
+| 5 | wip/* snapshot push failed (worktree NOT removed) |
+| 6 | no worktree matching slug |
+| 7 | slug matches multiple projects (use --project) |
+| 8 | hook failed (or untrusted command hook) |
+| 9 | no origin remote configured |
 
 ## How it compares
 
-| | forktrust | [claude-squad](https://github.com/smtg-ai/claude-squad) | [gtr](https://github.com/coderabbitai/git-worktree-runner) | [uzi](https://github.com/devflowinc/uzi) |
-|---|---|---|---|---|
-| Distribution | binary (Go) | binary (Go) | bash + brew | `go install` only |
-| TUI | no | yes (tmux) | no | yes (tmux) |
-| Refuse-on-conflict merge | yes (hard) | no (manual) | no | no |
-| WIP-snapshot on abandon | yes | no | no | no |
-| Auto-add to .git/info/exclude | yes | no | no | no |
-| Cross-repo `list` | yes | no | no | no |
-| AI tool integration | Claude Code plugin (planned) | Claude/Codex/Gemini/Aider/OpenCode | many | Claude Code |
-| Port allocation per worktree | planned (Phase 2) | no | no | yes |
-| Lockfile lock | planned (Phase 2) | no | no | no |
+Verified May 2026 against primary repo sources. Stars are GitHub API counts.
 
-If you want a heavyweight TUI that runs many agents in tmux side-by-side, use `claude-squad`. If you want a tool that gets out of your way and refuses to do anything that risks losing work, use `forktrust`.
+| | forktrust | [gtr](https://github.com/coderabbitai/git-worktree-runner) | [gwq](https://github.com/d-kuro/gwq) | [wtp](https://github.com/satococoa/wtp) | [workz](https://github.com/rohansx/workz) | [claude-squad](https://github.com/smtg-ai/claude-squad) |
+|---|---|---|---|---|---|---|
+| Language | Go | Bash | Go | Go | Rust | Go |
+| Distribution | brew tap | brew tap | brew tap | brew tap | crates.io | brew + install.sh |
+| `--ai <tool>` adapter | 9 tools | 9 tools | no | no | no | TUI (5 tools) |
+| Declarative copy/symlink/command hooks | yes | yes | yes | yes | auto-detect | no |
+| Per-worktree port allocation | yes | no | no | no | yes | no |
+| Auto-release ports on finish | **yes** | n/a | n/a | n/a | no | n/a |
+| **Refuse-on-conflict merge** | **yes** | no | no | no | no | no |
+| **wip/* snapshot on abandon** | **yes** | no | no | no | no | no |
+| **`finish` workflow** (commit + merge + push + cleanup) | **yes** | no | no | no | no | no |
+| Cross-repo `list` | **yes** | no | no | no | no | no |
+| `--json` output | yes | no | yes | no | no | TUI only |
+| Trust gate (SHA-pinned config) | yes | yes | no | no | no | no |
+| AGENTS.md / CLAUDE.md doc generator | **yes** | no | no | no | no | no |
+
+Hard differentiators (no verified competitor offers these):
+- `finish`-style safe merge orchestration with refuse-on-conflict and refuse-on-dirty-main
+- `wip/*` snapshot push on abandon (never-lose-WIP guarantee)
+- Cross-repo worktree listing
+- `agent-docs` command for one-step AI integration
+- Auto-release of ports on finish/rm (workz allocates but doesn't release)
 
 ## Roadmap
 
-**Phase 2:**
+- `forktrust exec <slug> -- <cmd>` (cross-worktree command runner; gwq has this)
+- `forktrust status --watch` (auto-refresh dashboard; gwq has this)
+- Cross-worktree edit prediction (warn on `new` if files are actively edited elsewhere)
+- MCP server (`forktrust mcp`) so AI agents can call worktree ops as native tools
+- Claude Code plugin (slash commands + skill + hook) in sister repo
 
-- Port allocator: per-worktree `.env` overrides so 3 dev servers don't fight over :3000.
-- Lockfile lock: `flock` wrapper that serializes `npm install` / `pnpm install` / `cargo build` across parallel worktrees.
-- Cross-worktree edit prediction: at `new` time, warn if the slug overlaps with files actively edited in another worktree.
-- Claude Code plugin: `/wt-new`, `/wt-finish`, `/wt-list` slash commands; PreToolUse hook that warns when an Edit is going into the main checkout instead of a worktree.
+## Test coverage
 
-**Phase 3:**
-
-- Cursor / Aider / Cline integrations via their respective hook surfaces.
-- `forktrust doctor` — diagnose user setup.
-- Optional bubbletea TUI dashboard for those who want it.
+57 unit cases (`go test ./... -race`), 7 exhaustive e2e scenarios including 5-process concurrent allocation race (verified flock works), refuse-on-conflict exit codes, SHA-pin auto-revoke, multi-project listing. CI runs on every push.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
