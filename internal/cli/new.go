@@ -12,6 +12,7 @@ import (
 	"github.com/binkovsky/forktrust/internal/config"
 	"github.com/binkovsky/forktrust/internal/git"
 	"github.com/binkovsky/forktrust/internal/hooks"
+	"github.com/binkovsky/forktrust/internal/ports"
 )
 
 var (
@@ -105,6 +106,34 @@ func runNew(_ *cobra.Command, args []string) error {
 		}
 	} else {
 		newf("loaded .forktrustconfig (%d post_create hook(s))", len(repoCfg.Hooks.PostCreate))
+
+		// Port allocation runs BEFORE hooks so command hooks see PORT in env via .env.local.
+		if repoCfg.Ports != nil {
+			min, max, perr := ports.ParseRange(repoCfg.Ports.Range)
+			if perr != nil {
+				return fmt.Errorf("invalid [ports].range: %w", perr)
+			}
+			size := repoCfg.Ports.Size
+			if size == 0 {
+				size = 10
+			}
+			storePath, _ := ports.DefaultPath()
+			blk, perr := ports.Allocate(storePath, ports.AllocOpts{
+				Repo: proj.Path, Slug: slug, Min: min, Max: max, Size: size,
+			})
+			if perr != nil {
+				return fmt.Errorf("port allocation: %w", perr)
+			}
+			if perr := ports.WriteEnv(wtPath, blk, repoCfg.Ports.Vars); perr != nil {
+				_ = ports.Release(storePath, proj.Path, slug)
+				return fmt.Errorf("port .env.local write: %w", perr)
+			}
+			for p := blk.Start; p <= blk.End(); p++ {
+				r.Ports = append(r.Ports, p)
+			}
+			newf("allocated ports %d-%d (written to %s)", blk.Start, blk.End(), ports.EnvFileName)
+		}
+
 		if repoCfg.HasCommandHooks() {
 			store, err := config.LoadTrust()
 			if err != nil {

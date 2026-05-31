@@ -21,7 +21,22 @@ const RepoConfigFile = ".forktrustconfig"
 // worktree. Hooks run in declared order; if one fails, subsequent hooks are
 // skipped and the worktree is left in place for inspection.
 type RepoConfig struct {
-	Hooks Hooks `toml:"hooks"`
+	Hooks Hooks        `toml:"hooks"`
+	Ports *PortsConfig `toml:"ports,omitempty"`
+}
+
+// PortsConfig declares an aligned port-block allocation policy for this repo.
+// When present, `forktrust new` allocates a block and writes a .env.local file
+// in the worktree exposing the assigned port(s) to the dev process. The block
+// is auto-released on `forktrust finish` / `forktrust rm`.
+type PortsConfig struct {
+	// Range is "MIN-MAX" inclusive; default "3000-3999".
+	Range string `toml:"range,omitempty"`
+	// Size is the number of ports per worktree block; default 10.
+	Size int `toml:"size,omitempty"`
+	// Vars is the list of environment variable names to receive the start
+	// port. PORT_END always gets end+1's predecessor. Default ["PORT"].
+	Vars []string `toml:"vars,omitempty"`
 }
 
 // Hooks groups hook lifecycles. Currently only post_create is supported;

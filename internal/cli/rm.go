@@ -10,6 +10,7 @@ import (
 
 	"github.com/binkovsky/forktrust/internal/config"
 	"github.com/binkovsky/forktrust/internal/git"
+	"github.com/binkovsky/forktrust/internal/ports"
 )
 
 var (
@@ -114,6 +115,11 @@ func runRm(_ *cobra.Command, args []string) error {
 		return err
 	}
 	r.WorktreeRemoved = true
+
+	// Release any port block this slug owned (no-op if none).
+	if storePath, perr := ports.DefaultPath(); perr == nil {
+		_ = ports.Release(storePath, proj.Path, slug)
+	}
 
 	// Only delete the local branch if either: clean from the start, OR WIP was
 	// safely pushed. If we --force'd over a dirty tree, keep the branch so the

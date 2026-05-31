@@ -10,6 +10,7 @@ import (
 
 	"github.com/binkovsky/forktrust/internal/config"
 	"github.com/binkovsky/forktrust/internal/git"
+	"github.com/binkovsky/forktrust/internal/ports"
 )
 
 var (
@@ -186,6 +187,11 @@ func runFinish(_ *cobra.Command, args []string) error {
 	if _, err := git.Run(proj.Path, "branch", "-D", branch); err == nil {
 		notef("deleted local branch %s", branch)
 		r.BranchDeleted = true
+	}
+
+	// 8. Release any port block this slug owned (no-op if none).
+	if storePath, perr := ports.DefaultPath(); perr == nil {
+		_ = ports.Release(storePath, proj.Path, slug)
 	}
 
 	notef("finish done")
