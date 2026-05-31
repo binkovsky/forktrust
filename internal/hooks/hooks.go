@@ -1,0 +1,225 @@
+// Package hooks executes post_create hooks declared in .forktrustconfig.
+// Hooks run in declared order; if one fails, subsequent hooks are skipped.
+package hooks
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"text/template"
+
+	"github.com/binkovsky/forktrust/internal/config"
+)
+
+// Context is the template/runtime context passed to every hook.
+type Context struct {
+	Branch   string // e.g. "fork/fix-bug"
+	Slug     string // e.g. "fix-bug"
+	Path     string // absolute path of the new worktree
+	MainPath string // absolute path of the main checkout
+	Project  string // registered project name
+}
+
+// Result describes one hook's outcome.
+type Result struct {
+	Type    string // copy | symlink | command
+	Summary string // short human-readable description, e.g. "copy .env -> .env"
+	Skipped bool   // true if input file/dir was missing (copy/symlink)
+	Err     error  // nil on success
+}
+
+// Run executes all post_create hooks in order. Stops at the first error.
+// stdoutStream and stderrStream control where command hook output goes
+// (use os.Stderr for both in JSON mode to keep stdout clean).
+func Run(cfg *config.RepoConfig, ctx Context, stdoutStream, stderrStream io.Writer) ([]Result, error) {
+	var results []Result
+	if cfg == nil {
+		return results, nil
+	}
+	for i, h := range cfg.Hooks.PostCreate {
+		r, err := runOne(h, ctx, stdoutStream, stderrStream)
+		results = append(results, r)
+		if err != nil {
+			return results, fmt.Errorf("hook %d (%s) failed: %w", i, h.Type, err)
+		}
+	}
+	return results, nil
+}
+
+func runOne(h config.Hook, ctx Context, stdout, stderr io.Writer) (Result, error) {
+	switch h.Type {
+	case config.HookCopy:
+		return doCopy(h, ctx)
+	case config.HookSymlink:
+		return doSymlink(h, ctx)
+	case config.HookCommand:
+		return doCommand(h, ctx, stdout, stderr)
+	}
+	return Result{Type: h.Type}, fmt.Errorf("unknown hook type %q", h.Type)
+}
+
+func doCopy(h config.Hook, ctx Context) (Result, error) {
+	src := filepath.Join(ctx.MainPath, h.From)
+	dst := filepath.Join(ctx.Path, h.To)
+	summary := fmt.Sprintf("copy %s -> %s", h.From, h.To)
+	info, err := os.Stat(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Result{Type: h.Type, Summary: summary + " (skipped: source missing)", Skipped: true}, nil
+		}
+		return Result{Type: h.Type, Summary: summary, Err: err}, err
+	}
+	if info.IsDir() {
+		if err := copyDir(src, dst); err != nil {
+			return Result{Type: h.Type, Summary: summary, Err: err}, err
+		}
+	} else {
+		if err := copyFile(src, dst); err != nil {
+			return Result{Type: h.Type, Summary: summary, Err: err}, err
+		}
+	}
+	return Result{Type: h.Type, Summary: summary}, nil
+}
+
+func doSymlink(h config.Hook, ctx Context) (Result, error) {
+	src := filepath.Join(ctx.MainPath, h.From)
+	dst := filepath.Join(ctx.Path, h.To)
+	summary := fmt.Sprintf("symlink %s -> %s", h.To, h.From)
+	if _, err := os.Stat(src); err != nil {
+		if os.IsNotExist(err) {
+			return Result{Type: h.Type, Summary: summary + " (skipped: source missing)", Skipped: true}, nil
+		}
+		return Result{Type: h.Type, Summary: summary, Err: err}, err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return Result{Type: h.Type, Summary: summary, Err: err}, err
+	}
+	// Replace existing symlink or empty dir so re-runs are idempotent.
+	// For non-empty directories (typically tracked by git — symlink hook
+	// is meant for gitignored dirs like node_modules), skip with a clear
+	// message rather than destroying user data.
+	if info, err := os.Lstat(dst); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			_ = os.Remove(dst)
+		} else if info.IsDir() {
+			entries, _ := os.ReadDir(dst)
+			if len(entries) > 0 {
+				return Result{Type: h.Type, Summary: summary + " (skipped: target is a non-empty tracked dir)", Skipped: true}, nil
+			}
+			_ = os.Remove(dst)
+		} else {
+			_ = os.Remove(dst)
+		}
+	}
+	if err := os.Symlink(src, dst); err != nil {
+		return Result{Type: h.Type, Summary: summary, Err: err}, err
+	}
+	return Result{Type: h.Type, Summary: summary}, nil
+}
+
+func doCommand(h config.Hook, ctx Context, stdout, stderr io.Writer) (Result, error) {
+	expanded, err := expand(h.Run, ctx)
+	if err != nil {
+		return Result{Type: h.Type, Summary: "command: <template error>", Err: err}, err
+	}
+	summary := fmt.Sprintf("command: %s", truncate(expanded, 60))
+
+	workDir := ctx.Path
+	if h.WorkDir != "" {
+		workDir = filepath.Join(ctx.Path, h.WorkDir)
+	}
+
+	cmd := exec.Command("sh", "-c", expanded)
+	cmd.Dir = workDir
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	cmd.Env = os.Environ()
+	for k, v := range h.Env {
+		ev, err := expand(v, ctx)
+		if err != nil {
+			return Result{Type: h.Type, Summary: summary, Err: err}, err
+		}
+		cmd.Env = append(cmd.Env, k+"="+ev)
+	}
+	if err := cmd.Run(); err != nil {
+		return Result{Type: h.Type, Summary: summary, Err: err}, err
+	}
+	return Result{Type: h.Type, Summary: summary}, nil
+}
+
+// expand applies text/template with strict missingkey behavior — a template
+// referring to a field that doesn't exist on Context errors out, rather than
+// silently writing "<no value>".
+func expand(s string, ctx Context) (string, error) {
+	t, err := template.New("hook").Option("missingkey=error").Parse(s)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, ctx); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
+func copyFile(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	info, _ := os.Stat(src)
+	mode := os.FileMode(0o644)
+	if info != nil {
+		mode = info.Mode().Perm()
+	}
+	return os.WriteFile(dst, data, mode)
+}
+
+func copyDir(src, dst string) error {
+	return filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, p)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm())
+		}
+		return copyFile(p, target)
+	})
+}
+
+// Summary collapses results into a short multi-line string for human output.
+func Summary(results []Result) string {
+	if len(results) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range results {
+		mark := "ok"
+		if r.Err != nil {
+			mark = "FAIL"
+		} else if r.Skipped {
+			mark = "skip"
+		}
+		fmt.Fprintf(&b, "  [%s] %s\n", mark, r.Summary)
+	}
+	return b.String()
+}

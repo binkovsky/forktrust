@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/binkovsky/forktrust/internal/config"
 	"github.com/binkovsky/forktrust/internal/git"
+	"github.com/binkovsky/forktrust/internal/hooks"
 )
 
 var (
@@ -88,10 +90,63 @@ func runNew(_ *cobra.Command, args []string) error {
 		}
 	}
 
-	copied := copyDotEnvFiles(proj.Path, wtPath)
-	r.EnvFilesCopied = copied
-	if copied > 0 {
-		newf("copied %d .env file(s) into worktree", copied)
+	// Legacy fallback: copy bare .env* files only when there is no
+	// .forktrustconfig. Once the repo declares hooks, the user is expected
+	// to express .env handling via a copy hook explicitly.
+	repoCfg, err := config.LoadRepoConfig(proj.Path)
+	if err != nil {
+		return err
+	}
+	if repoCfg == nil {
+		copied := copyDotEnvFiles(proj.Path, wtPath)
+		r.EnvFilesCopied = copied
+		if copied > 0 {
+			newf("copied %d .env file(s) into worktree (no .forktrustconfig)", copied)
+		}
+	} else {
+		newf("loaded .forktrustconfig (%d post_create hook(s))", len(repoCfg.Hooks.PostCreate))
+		if repoCfg.HasCommandHooks() {
+			store, err := config.LoadTrust()
+			if err != nil {
+				return err
+			}
+			trusted, reason := store.Check(proj.Path)
+			if !trusted {
+				fmt.Fprintln(os.Stderr)
+				fmt.Fprintf(os.Stderr, "REFUSE: .forktrustconfig has command hooks but this repo is not trusted (%s).\n", reason)
+				fmt.Fprintln(os.Stderr, "Inspect the config, then approve with:")
+				fmt.Fprintf(os.Stderr, "  forktrust trust %s\n", proj.Path)
+				fmt.Fprintln(os.Stderr, "Or skip command hooks for this run with --no-hooks (copy/symlink still run).")
+				return coded(ExitHookFailed, fmt.Errorf("untrusted .forktrustconfig: %s", reason))
+			}
+		}
+		hctx := hooks.Context{
+			Branch:   branch,
+			Slug:     slug,
+			Path:     wtPath,
+			MainPath: proj.Path,
+			Project:  proj.Name,
+		}
+		stdout := io.Writer(os.Stdout)
+		if newJSON {
+			stdout = os.Stderr
+		}
+		results, hookErr := hooks.Run(repoCfg, hctx, stdout, os.Stderr)
+		for _, hr := range results {
+			r.HooksRun = append(r.HooksRun, hr.Summary)
+			if !newJSON {
+				mark := "ok"
+				if hr.Err != nil {
+					mark = "FAIL"
+				} else if hr.Skipped {
+					mark = "skip"
+				}
+				fmt.Fprintf(os.Stderr, "  [%s] %s\n", mark, hr.Summary)
+			}
+		}
+		if hookErr != nil {
+			return coded(ExitHookFailed, hookErr)
+		}
 	}
 
 	if newInstall {
@@ -104,7 +159,7 @@ func runNew(_ *cobra.Command, args []string) error {
 			return fmt.Errorf("install failed: %w", err)
 		}
 		r.HooksRun = append(r.HooksRun, "install:"+installCmd)
-	} else if proj.InstallCmd != "" {
+	} else if proj.InstallCmd != "" && repoCfg == nil {
 		newf("skipping install (use --install to run: %s)", proj.InstallCmd)
 	}
 
