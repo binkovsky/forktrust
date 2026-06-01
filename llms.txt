@@ -66,6 +66,7 @@ run  = "pnpm install"   # requires `forktrust trust`
 | 11 | cwd is in unregistered git repo |
 | 12 | rm/finish could not determine ahead count |
 | 13 | rm: worktree removed but branch -D failed |
+| 14 | rm/finish refused: ignored files in worktree would be permanently deleted |
 
 ## Releases
 

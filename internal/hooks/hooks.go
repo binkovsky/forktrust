@@ -9,12 +9,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"text/template"
 
 	"github.com/binkovsky/forktrust/internal/config"
 	"github.com/binkovsky/forktrust/internal/pathsafe"
 )
+
+// envVarNameRE matches a valid POSIX environment variable name.
+// Used by parseEnvFile to reject injection-prone lines (names with
+// newlines, '=', spaces, or shell metacharacters).
+var envVarNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // Context is the template/runtime context passed to every hook.
 type Context struct {
@@ -73,6 +79,10 @@ func doCopy(h config.Hook, ctx Context) (Result, error) {
 	if err != nil {
 		return Result{Type: h.Type, Summary: summary, Err: err}, fmt.Errorf("copy to %q: %w", h.To, err)
 	}
+	if reason := protectedDst(ctx.Path, dst); reason != "" {
+		e := fmt.Errorf("copy to %q refused: %s", h.To, reason)
+		return Result{Type: h.Type, Summary: summary, Err: e}, e
+	}
 	info, err := os.Stat(src)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -102,6 +112,10 @@ func doSymlink(h config.Hook, ctx Context) (Result, error) {
 	if err != nil {
 		return Result{Type: h.Type, Summary: summary, Err: err}, fmt.Errorf("symlink to %q: %w", h.To, err)
 	}
+	if reason := protectedDst(ctx.Path, dst); reason != "" {
+		e := fmt.Errorf("symlink to %q refused: %s", h.To, reason)
+		return Result{Type: h.Type, Summary: summary, Err: e}, e
+	}
 	if _, err := os.Stat(src); err != nil {
 		if os.IsNotExist(err) {
 			return Result{Type: h.Type, Summary: summary + " (skipped: source missing)", Skipped: true}, nil
@@ -115,6 +129,10 @@ func doSymlink(h config.Hook, ctx Context) (Result, error) {
 	// For non-empty directories (typically tracked by git — symlink hook
 	// is meant for gitignored dirs like node_modules), skip with a clear
 	// message rather than destroying user data.
+	// REFUSE to replace an existing regular file: that would silently
+	// overwrite a tracked file and, for a self-referential hook like
+	// from=README.md to=README.md, turn every write in the worktree into a
+	// write to the main checkout — breaking the core worktree isolation.
 	if info, err := os.Lstat(dst); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
 			_ = os.Remove(dst)
@@ -125,7 +143,9 @@ func doSymlink(h config.Hook, ctx Context) (Result, error) {
 			}
 			_ = os.Remove(dst)
 		} else {
-			_ = os.Remove(dst)
+			// dst is a regular file — refuse silently replacing it.
+			e := fmt.Errorf("symlink to %q refused: destination is an existing regular file (use 'copy' hook to copy files, or remove the file first)", h.To)
+			return Result{Type: h.Type, Summary: summary, Err: e}, e
 		}
 	}
 	if err := os.Symlink(src, dst); err != nil {
@@ -146,22 +166,19 @@ func doCommand(h config.Hook, ctx Context, stdout, stderr io.Writer) (Result, er
 		workDir = filepath.Join(ctx.Path, h.WorkDir)
 	}
 
-	// Auto-source the worktree's .env.local (if any) so command hooks see
-	// PORT and friends without needing to write `source .env.local`
-	// themselves. The `set -a; ... set +a` pattern exports each variable.
-	// Errors sourcing are swallowed (2>/dev/null) so a missing file is fine.
-	envLocal := filepath.Join(ctx.Path, ".env.local")
-	preamble := ""
-	if _, err := os.Stat(envLocal); err == nil {
-		// Quote the path so spaces / specials in worktree paths are safe.
-		preamble = "set -a; . " + shellQuote(envLocal) + " >/dev/null 2>&1; set +a; "
-	}
+	// Inject .env.local vars into the command's environment WITHOUT shell-eval.
+	// The old approach (`set -a; . .env.local`) executed the file as shell code,
+	// which let a committed or hook-written .env.local bypass the trust gate
+	// (e.g. `touch /tmp/pwned` on its own line in .env.local would run).
+	// We now parse .env.local with a strict KEY=VALUE reader — no shell
+	// evaluation occurs, so only the actual variable bindings reach cmd.Env.
+	envLocalVars := parseEnvFile(filepath.Join(ctx.Path, ".env.local"))
 
-	cmd := exec.Command("sh", "-c", preamble+expanded)
+	cmd := exec.Command("sh", "-c", expanded)
 	cmd.Dir = workDir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), envLocalVars...)
 	for k, v := range h.Env {
 		ev, err := expand(v, ctx)
 		if err != nil {
@@ -318,6 +335,67 @@ func copyDir(src, dst, dstRoot string) error {
 		}
 		return copyFile(p, target, dstRoot)
 	})
+}
+
+// protectedDst returns a non-empty refusal reason if dst is a path that hooks
+// must never write to, regardless of hook type. Applies to both copy and
+// symlink hooks. Returns "" when dst is safe to write.
+//
+// Protected paths:
+//   - <worktree>/.git  (the gitdir file; overwriting it corrupts the worktree)
+//   - <worktree>/.git/ (any file under the gitdir hierarchy)
+//   - <worktree>/.forktrust (forktrust's own internal state dir)
+func protectedDst(worktreePath, dst string) string {
+	gitFile := filepath.Join(worktreePath, ".git")
+	gitDir := gitFile + string(filepath.Separator)
+	ftDir := filepath.Join(worktreePath, ".forktrust")
+	ftDirSlash := ftDir + string(filepath.Separator)
+	switch {
+	case dst == gitFile:
+		return "destination .git is protected (overwriting it corrupts the worktree)"
+	case strings.HasPrefix(dst, gitDir):
+		return "destination is inside .git/ which is protected"
+	case dst == ftDir:
+		return "destination .forktrust is protected (forktrust internal state)"
+	case strings.HasPrefix(dst, ftDirSlash):
+		return "destination is inside .forktrust/ which is protected"
+	}
+	return ""
+}
+
+// parseEnvFile reads a KEY=VALUE file (e.g. .env.local) and returns each
+// valid binding as "KEY=VALUE" suitable for appending to exec.Cmd.Env.
+//
+// Security contract: NO shell evaluation occurs. Lines are matched with a
+// strict regexp (POSIX env-var name followed by '='); anything else (shell
+// commands, subshell expansions, multi-line values, comments without '#') is
+// silently skipped. This prevents a committed or hook-written .env.local from
+// executing arbitrary code when a command hook runs — unlike the old
+// `set -a; . .env.local; set +a` preamble which ran the file as shell code.
+func parseEnvFile(path string) []string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil // missing or unreadable — not an error
+	}
+	var result []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimRight(line, "\r")
+		// Skip empty lines and comments.
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		idx := strings.IndexByte(line, '=')
+		if idx <= 0 {
+			continue
+		}
+		key := line[:idx]
+		// Only accept POSIX env var names: letter/underscore then word chars.
+		if !envVarNameRE.MatchString(key) {
+			continue
+		}
+		result = append(result, line) // KEY=VALUE verbatim — no eval
+	}
+	return result
 }
 
 // Summary collapses results into a short multi-line string for human output.

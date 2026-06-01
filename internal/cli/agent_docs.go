@@ -89,6 +89,7 @@ Exit codes are stable:
 | 11 | cwd is in an unregistered git repo (run ` + "`forktrust config add .`" + `) |
 | 12 | rm/finish could not determine ahead count (no main reference resolved); push origin/main or re-run with --force |
 | 13 | rm: worktree removed and ports released, but ` + "`git branch -D`" + ` failed (the branch lingers) |
+| 14 | rm/finish refused: worktree has ignored files that would be permanently deleted (` + "`--force`" + ` skips the guard) |
 
 ### Inspecting state
 

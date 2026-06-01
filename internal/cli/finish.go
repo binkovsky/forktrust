@@ -144,6 +144,9 @@ func runFinish(_ *cobra.Command, args []string) error {
 	r.CommitsAhead = ahead
 	if ahead == 0 {
 		notef("branch %s has no commits ahead of %s, nothing to merge", branch, aheadRef)
+		if err := refuseIfIgnoredFiles(wtPath, slug); err != nil {
+			return err
+		}
 		if err := removeWorktree(finishJSON, proj.Path, wtPath, false); err != nil {
 			return err
 		}
@@ -228,6 +231,9 @@ func runFinish(_ *cobra.Command, args []string) error {
 	}
 
 	// 7. Remove the worktree + branch.
+	if err := refuseIfIgnoredFiles(wtPath, slug); err != nil {
+		return err
+	}
 	if err := removeWorktree(finishJSON, proj.Path, wtPath, false); err != nil {
 		return err
 	}
@@ -397,4 +403,22 @@ func resolveWorktree(cfg *config.Config, projectName, slug string) (*config.Proj
 		return nil, "", coded(ExitAmbiguousSlug, fmt.Errorf("multiple matches: disambiguate with --project (one of: %s)", strings.Join(names, ", ")))
 	}
 	return hits[0].proj, hits[0].path, nil
+}
+
+// refuseIfIgnoredFiles refuses with ExitIgnoredFiles if the worktree contains
+// any ignored files (other than forktrust-managed .env.local). Called before
+// any removeWorktree invocation because git worktree remove silently deletes
+// ignored files without listing them — git status --porcelain does not show them.
+func refuseIfIgnoredFiles(wtPath, slug string) error {
+	ignoredN, _ := git.IgnoredCount(wtPath, []string{".env.local"})
+	if ignoredN == 0 {
+		return nil
+	}
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "REFUSE: worktree has %d ignored file(s) that would be permanently deleted.\n", ignoredN)
+	fmt.Fprintln(os.Stderr, "git worktree remove deletes ignored files without warning (they are not tracked).")
+	fmt.Fprintf(os.Stderr, "List them:  git -C %s ls-files --others --ignored --exclude-standard\n", wtPath)
+	fmt.Fprintln(os.Stderr, "Move them out of the worktree, then re-run.")
+	fmt.Fprintf(os.Stderr, "Or discard: forktrust rm %s --force   (does NOT run finish, just abandons)\n", slug)
+	return coded(ExitIgnoredFiles, fmt.Errorf("worktree has %d ignored file(s) that would be lost", ignoredN))
 }

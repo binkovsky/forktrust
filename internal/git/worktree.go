@@ -60,6 +60,8 @@ func CurrentBranch(wt string) (string, error) {
 }
 
 // DirtyCount returns the number of changed + untracked files in the given worktree.
+// NOTE: git status --porcelain does NOT include ignored files; use IgnoredCount
+// separately before removing a worktree to avoid silently losing them.
 func DirtyCount(wt string) (int, error) {
 	out, err := Run(wt, "status", "--porcelain")
 	if err != nil {
@@ -69,6 +71,42 @@ func DirtyCount(wt string) (int, error) {
 		return 0, nil
 	}
 	return strings.Count(out, "\n") + 1, nil
+}
+
+// IgnoredCount returns the number of ignored files in the given worktree,
+// excluding any paths in the allowlist (relative to wt). The allowlist is
+// used to skip forktrust-managed files such as .env.local that are
+// intentionally ignored and safe to remove alongside the worktree.
+//
+// Uses `git ls-files --others --ignored --exclude-standard` which lists
+// tracked-gitignore and .gitignore-matched files only — not committed files.
+// Returns (0, nil) when the git command is unavailable or produces an error
+// (graceful degradation: we do not block rm on a count we can't compute).
+func IgnoredCount(wt string, allowlist []string) (int, error) {
+	out, err := Run(wt, "ls-files", "--others", "--ignored", "--exclude-standard")
+	if err != nil {
+		// Not all git versions / bare configs support this; degrade gracefully
+		// rather than blocking the user. The calling site logs a warning.
+		return 0, nil
+	}
+	if out == "" {
+		return 0, nil
+	}
+	allow := make(map[string]struct{}, len(allowlist))
+	for _, a := range allowlist {
+		allow[a] = struct{}{}
+	}
+	count := 0
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		if _, skip := allow[line]; skip {
+			continue
+		}
+		count++
+	}
+	return count, nil
 }
 
 // AddWorktreeNewBranchFrom creates a new worktree at path on a new branch

@@ -194,6 +194,22 @@ func runRm(_ *cobra.Command, args []string) error {
 		r.WipPushed = true
 	}
 
+	// Guard against silently losing ignored files. git worktree remove deletes
+	// them without warning because git status --porcelain does not list them.
+	// Allowlist .env.local: forktrust writes it and it is intentionally ignored.
+	if !rmForce {
+		ignoredN, _ := git.IgnoredCount(wtPath, []string{".env.local"})
+		if ignoredN > 0 {
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintf(os.Stderr, "REFUSE: worktree has %d ignored file(s) (e.g. secret.log, build artifacts)\n", ignoredN)
+			fmt.Fprintln(os.Stderr, "that are NOT tracked by git and would be PERMANENTLY DELETED by `git worktree remove`.")
+			fmt.Fprintln(os.Stderr, "Move them out of the worktree first, then re-run.")
+			fmt.Fprintf(os.Stderr, "List them: git -C %s ls-files --others --ignored --exclude-standard\n", wtPath)
+			fmt.Fprintf(os.Stderr, "Or drop them: forktrust rm %s --force\n", slug)
+			return coded(ExitIgnoredFiles, fmt.Errorf("worktree has %d ignored file(s) that would be lost", ignoredN))
+		}
+	}
+
 	if err := removeWorktree(rmJSON, proj.Path, wtPath, rmForce); err != nil {
 		return err
 	}

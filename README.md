@@ -145,6 +145,7 @@ AI agents and CI scripts can switch on these. They will not change across releas
 | 11 | cwd is in an unregistered git repo (run `forktrust config add .`) |
 | 12 | rm/finish could not determine ahead count (push origin/main, or re-run with `--force`) |
 | 13 | rm: worktree removed and ports released, but `git branch -D` failed (branch lingers) |
+| 14 | rm/finish refused: worktree has ignored files that would be silently lost (move them out or use `--force`) |
 
 ## How it compares
 

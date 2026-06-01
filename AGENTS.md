@@ -66,6 +66,7 @@ forktrust finish my-task --dry-run    # preview without executing
 | 11 | cwd is in an unregistered git repo | run `forktrust config add .` or use `--project` |
 | 12 | rm/finish could not determine ahead count | push origin/main, or re-run with `--force` (keeps local branch) |
 | 13 | rm: worktree removed, port released, branch -D failed | investigate with `git -C <repo> branch | grep fork/<slug>` |
+| 14 | rm/finish refused: ignored files in worktree would be lost | list with `git -C <wt> ls-files --others --ignored --exclude-standard`, move out or use `--force` |
 
 ## When NOT to use forktrust
 

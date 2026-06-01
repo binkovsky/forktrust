@@ -17,6 +17,7 @@ const (
 	ExitCwdNotRegistered  = 11 // cwd is in a git repo that is not registered (and --project not given)
 	ExitAheadUnknown      = 12 // rm/finish refused: could not determine if branch has unpushed work (no main reference resolved)
 	ExitBranchNotDeleted  = 13 // rm: worktree removed and ports released, but `git branch -D` failed (branch lingers)
+	ExitIgnoredFiles      = 14 // rm/finish refused: worktree has ignored files that would be silently lost (use --force to skip)
 )
 
 // CodedError carries a structured exit code through cobra's error path.
