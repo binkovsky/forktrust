@@ -122,7 +122,15 @@ func runFinish(_ *cobra.Command, args []string) error {
 		return coded(ExitAheadUnknown, fmt.Errorf("no main reference resolved (tried origin/%s, %s); push or create %s first", mainBranch, mainBranch, mainBranch))
 	}
 
-	// 2. NOW it's safe to commit uncommitted WIP on the worktree branch.
+	// 2a. Guard against ignored files BEFORE any side effect (commit/merge/push).
+	// git worktree remove silently deletes ignored files; DirtyCount misses them.
+	// Refuse now so the user can move them out before the merge runs.
+	// ahead==0 path has its own check at line ~147 for the same reason.
+	if err := refuseIfIgnoredFiles(wtPath, slug); err != nil {
+		return err
+	}
+
+	// 2b. NOW it's safe to commit uncommitted WIP on the worktree branch.
 	if dirty > 0 {
 		msg := finishMessage
 		if msg == "" {
@@ -231,9 +239,7 @@ func runFinish(_ *cobra.Command, args []string) error {
 	}
 
 	// 7. Remove the worktree + branch.
-	if err := refuseIfIgnoredFiles(wtPath, slug); err != nil {
-		return err
-	}
+	// (ignored-files guard ran before merge at step 2a; no need to repeat here)
 	if err := removeWorktree(finishJSON, proj.Path, wtPath, false); err != nil {
 		return err
 	}
@@ -291,6 +297,10 @@ func previewFinish(r finishResult, mainBranch, mainPath string) error {
 	current, _ := git.CurrentBranch(mainPath)
 	r.MainCurrentBranch = current
 
+	// Mirror the early ignored-files guard from runFinish (step 2a).
+	// previewFinish must surface every refusal that runFinish would hit.
+	ignoredN, _ := git.IgnoredCount(r.WorktreePath, []string{".env.local"})
+
 	switch {
 	case !aheadKnown:
 		r.WouldRefuse = fmt.Sprintf("no main reference resolved (exit %d). Push origin/%s or create local %s first.", ExitAheadUnknown, mainBranch, mainBranch)
@@ -298,6 +308,8 @@ func previewFinish(r finishResult, mainBranch, mainPath string) error {
 		r.WouldRefuse = fmt.Sprintf("main checkout on %q, expected %q (exit %d)", current, mainBranch, ExitMainOnWrongBranch)
 	case mainDirty > 0:
 		r.WouldRefuse = fmt.Sprintf("main checkout is dirty (%d uncommitted file(s)) (exit %d)", mainDirty, ExitDirtyMain)
+	case ignoredN > 0:
+		r.WouldRefuse = fmt.Sprintf("worktree has %d ignored file(s) that would be permanently deleted (exit %d). Move them out or use `forktrust rm --force`.", ignoredN, ExitIgnoredFiles)
 	}
 
 	if finishJSON {
