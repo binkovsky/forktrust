@@ -7,6 +7,13 @@ import (
 	"strings"
 )
 
+// envLocalManagedHeader is the exact first line that forktrust writes into
+// every .env.local it generates (see ports.ManagedHeader — must stay in sync).
+// We duplicate it here rather than import internal/ports to avoid an import
+// cycle (git is a leaf package; ports imports pathsafe but not git).
+// If you change the header in ports/envfile.go, update this too.
+const envLocalManagedHeader = "# Managed by forktrust. Do not edit; values are overwritten on each `forktrust new`.\n"
+
 // Worktree is a single registered git worktree.
 type Worktree struct {
 	Path     string
@@ -93,12 +100,15 @@ func IgnoredCount(wt string) (int, error) {
 		if line == "" {
 			continue
 		}
-		// Skip only the one file forktrust itself generates: .env.local.
-		// We gate on BOTH the filename AND the marker so a user-authored
-		// .env.local (no marker) is still counted. We never skip other files
-		// based on content alone — that would let a crafted secret.log starting
-		// with the marker string silently bypass the ignored-file guard.
-		if filepath.Base(line) == ".env.local" && isForktrustManaged(filepath.Join(wt, line)) {
+		// Skip only the root-level .env.local that forktrust itself generates.
+		// Two conditions must both hold:
+		//   1. The path must be exactly ".env.local" (not foo/.env.local or
+		//      any nested variant) — forktrust only writes to the worktree root.
+		//   2. The file content must begin with the exact ManagedHeader line
+		//      (including trailing newline) — not just a matching prefix — so a
+		//      user file that starts with "# Managed by forktrust" but continues
+		//      differently is NOT treated as ours.
+		if filepath.Clean(line) == ".env.local" && isForktrustManaged(filepath.Join(wt, line)) {
 			continue
 		}
 		count++
@@ -106,19 +116,20 @@ func IgnoredCount(wt string) (int, error) {
 	return count, nil
 }
 
-// isForktrustManaged reports whether the file at path was written by forktrust
-// (i.e. starts with the "# Managed by forktrust" marker line). These files are
-// safe to delete on worktree removal — forktrust regenerates them on `new`.
+// isForktrustManaged reports whether the file at path was written by forktrust.
+// It returns true IFF the file's content begins with the EXACT envLocalManagedHeader
+// string (the full first line including the trailing newline). A user file that
+// merely starts with "# Managed by forktrust" but has a different continuation
+// (e.g. "# Managed by forktrust but actually mine") returns false.
 func isForktrustManaged(path string) bool {
-	const marker = "# Managed by forktrust"
 	f, err := os.Open(path)
 	if err != nil {
 		return false
 	}
 	defer f.Close()
-	buf := make([]byte, len(marker))
+	buf := make([]byte, len(envLocalManagedHeader))
 	n, _ := f.Read(buf)
-	return string(buf[:n]) == marker
+	return string(buf[:n]) == envLocalManagedHeader
 }
 
 // AddWorktreeNewBranchFrom creates a new worktree at path on a new branch

@@ -14,6 +14,20 @@ import (
 // `source` it.
 const EnvFileName = ".env.local"
 
+// ManagedHeader is the EXACT first line forktrust writes into every .env.local
+// it generates. Used as ownership proof: a file is forktrust-managed IFF its
+// very first line (including the trailing newline) matches this string exactly.
+//
+// This constant is the single source of truth shared by:
+//   - RenderEnv (writes the header)
+//   - WriteEnv (reads back to detect forktrust-owned files before overwrite)
+//   - git.IgnoredCount / git.isForktrustManaged (detects ownership to skip
+//     the ignored-file deletion guard)
+//
+// Do NOT change this string without also rotating the worktrees that already
+// have .env.local files written with the old header.
+const ManagedHeader = "# Managed by forktrust. Do not edit; values are overwritten on each `forktrust new`.\n"
+
 // RenderEnv builds the file body for a given block + var list. The single
 // well-known variable PORT_END is always included so scripts can detect the
 // upper bound of the assigned block.
@@ -63,9 +77,13 @@ func WriteEnv(worktreePath string, b Block, vars []string) error {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("%s is a symlink; refusing to write (would escape worktree)", target)
 		}
-		// Regular file: peek at the marker.
+		// Regular file: verify ownership by checking the exact first line.
+		// We use strings.HasPrefix with the full ManagedHeader (including the
+		// trailing newline) rather than a bare prefix, so a user file whose
+		// content happens to start with "# Managed by forktrust" but continues
+		// with different text is NOT treated as ours and is preserved.
 		if data, err := os.ReadFile(target); err == nil {
-			if !strings.HasPrefix(string(data), "# Managed by forktrust") {
+			if !strings.HasPrefix(string(data), ManagedHeader) {
 				return fmt.Errorf("%s already exists and was not written by forktrust; refusing to overwrite", target)
 			}
 		}
