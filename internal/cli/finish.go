@@ -305,13 +305,16 @@ func previewFinish(r finishResult, mainBranch, mainPath string) error {
 	// previewFinish must surface every refusal that runFinish would hit.
 	ignoredN, _ := git.IgnoredCount(r.WorktreePath)
 
-	// Mirror runFinish pre-flight order exactly: ignored → wrong-branch → dirty-main → unknown-ref.
-	// Any reordering here creates dry-run divergence.
+	// Mirror runFinish refusal order exactly — dry-run must agree with real finish.
+	// Real finish order: (1) no main ref → exit 12; (2) ignored files → exit 14;
+	// (3) wrong branch → exit 10; (4) dirty main → exit 3.
+	// The aheadKnown check happens in runFinish at step 1 (before any pre-flight),
+	// so it must be first here too.
 	switch {
-	case ignoredN > 0:
-		r.WouldRefuse = fmt.Sprintf("worktree has %d ignored file(s) that would be permanently deleted (exit %d). Move them out or use `forktrust rm --force`.", ignoredN, ExitIgnoredFiles)
 	case !aheadKnown:
 		r.WouldRefuse = fmt.Sprintf("no main reference resolved (exit %d). Push origin/%s or create local %s first.", ExitAheadUnknown, mainBranch, mainBranch)
+	case ignoredN > 0:
+		r.WouldRefuse = fmt.Sprintf("worktree has %d ignored file(s) that would be permanently deleted (exit %d). Move them out or use `forktrust rm --force`.", ignoredN, ExitIgnoredFiles)
 	case current != mainBranch:
 		r.WouldRefuse = fmt.Sprintf("main checkout on %q, expected %q (exit %d)", current, mainBranch, ExitMainOnWrongBranch)
 	case mainDirty > 0:

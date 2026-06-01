@@ -113,17 +113,29 @@ func (c *Config) AllProjects() []Project {
 	return nil
 }
 
-// Add appends a project, deduping by name AND by path.
+// Add appends a project, deduping by name AND by canonical path.
 // Registering the same repo path under two names causes resolveWorktree to
 // match a worktree twice and fail with "multiple matches", so we reject
 // duplicate paths upfront with a clear message.
+// Paths are canonicalized via filepath.EvalSymlinks before comparison so a
+// symlink to an already-registered directory is detected as a duplicate.
 func (c *Config) Add(p Project) error {
 	if c.FindByName(p.Name) != nil {
 		return fmt.Errorf("project %q already registered", p.Name)
 	}
+	// Canonicalize the new path (resolve symlinks); fall back to cleaned path
+	// if the directory doesn't exist yet (unusual but don't block the add).
+	newReal := p.Path
+	if r, err := filepath.EvalSymlinks(p.Path); err == nil {
+		newReal = r
+	}
 	for _, existing := range c.Projects {
-		if existing.Path == p.Path {
-			return fmt.Errorf("path %q is already registered as project %q", p.Path, existing.Name)
+		existReal := existing.Path
+		if r, err := filepath.EvalSymlinks(existing.Path); err == nil {
+			existReal = r
+		}
+		if existReal == newReal {
+			return fmt.Errorf("path %q resolves to the same directory as already-registered project %q", p.Path, existing.Name)
 		}
 	}
 	c.Projects = append(c.Projects, p)

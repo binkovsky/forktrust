@@ -273,14 +273,16 @@ func runRm(_ *cobra.Command, args []string) error {
 }
 
 func previewRm(r rmResult, wipBranch, mainPath string, ahead int, aheadKnown bool, hasOrigin bool) error {
-	// Mirror actual rm pre-flight order exactly so dry-run always agrees with real rm.
+	// Mirror actual rm refusal order exactly — dry-run must agree with real rm.
+	// Real rm order: (1) aheadKnown=false → exit 12; (2) ignored files → exit 14;
+	// (3) no-origin with work → exit 9. Any reordering here creates divergence.
 	hadWork := r.UncommittedFiles > 0 || ahead > 0 || !aheadKnown
 	ignoredN, _ := git.IgnoredCount(r.WorktreePath)
 	switch {
-	case ignoredN > 0 && !r.Force:
-		r.WouldRefuse = fmt.Sprintf("worktree has %d ignored file(s) that would be permanently deleted (exit %d). Move them out or use --force.", ignoredN, ExitIgnoredFiles)
 	case !aheadKnown && !r.Force:
 		r.WouldRefuse = fmt.Sprintf("could not determine ahead count (exit %d). Push origin/main first, or re-run with --force (keeps local branch).", ExitAheadUnknown)
+	case ignoredN > 0 && !r.Force:
+		r.WouldRefuse = fmt.Sprintf("worktree has %d ignored file(s) that would be permanently deleted (exit %d). Move them out or use --force.", ignoredN, ExitIgnoredFiles)
 	case hadWork && !r.Force && !hasOrigin:
 		r.WouldRefuse = fmt.Sprintf("no origin remote (exit %d). Re-run with --force to remove anyway.", ExitNoOriginRemote)
 	}

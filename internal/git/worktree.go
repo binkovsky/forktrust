@@ -93,10 +93,12 @@ func IgnoredCount(wt string) (int, error) {
 		if line == "" {
 			continue
 		}
-		// Skip files that forktrust itself manages and always regenerates.
-		// Check the actual marker rather than the filename, so a user-authored
-		// .env.local (without the marker) is counted and not silently dropped.
-		if isForktrustManaged(filepath.Join(wt, line)) {
+		// Skip only the one file forktrust itself generates: .env.local.
+		// We gate on BOTH the filename AND the marker so a user-authored
+		// .env.local (no marker) is still counted. We never skip other files
+		// based on content alone — that would let a crafted secret.log starting
+		// with the marker string silently bypass the ignored-file guard.
+		if filepath.Base(line) == ".env.local" && isForktrustManaged(filepath.Join(wt, line)) {
 			continue
 		}
 		count++
