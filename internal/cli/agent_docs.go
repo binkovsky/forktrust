@@ -51,14 +51,14 @@ copy of the codebase so concurrent agents do not step on each other.
 ` + "   ```bash\n" + `   forktrust finish <task-slug>      # commit WIP + merge to main + push + cleanup
 ` + "   ```\n" + `
 4. If you want to throw the work away (without merging), use:
-` + "   ```bash\n" + `   forktrust rm <task-slug>          # snapshots WIP to wip/<branch>-YYYYMMDD on origin first
+` + "   ```bash\n" + `   forktrust rm <task-slug>          # snapshots WIP to wip/<branch>-YYYYMMDD-HHMMSS on origin first
 ` + "   ```\n" + `
 ### Hard safety guarantees you can rely on
 
 - ` + "`finish`" + ` REFUSES on merge conflict (no auto-resolve). If exit code is 2,
   the merge has a conflict; show the user and ask before doing anything.
 - ` + "`finish`" + ` REFUSES if the main checkout has uncommitted changes (exit 3).
-- ` + "`rm`" + ` ALWAYS pushes uncommitted WIP to ` + "`wip/<branch>-YYYYMMDD`" + ` on origin
+- ` + "`rm`" + ` ALWAYS pushes uncommitted WIP to ` + "`wip/<branch>-YYYYMMDD-HHMMSS`" + ` on origin
   before removing. Work is never lost without ` + "`--force`" + `.
 - Worktree directories are auto-added to ` + "`.git/info/exclude`" + ` so they never
   pollute ` + "`git status`" + ` for the main checkout.
@@ -87,6 +87,8 @@ Exit codes are stable:
 | 9 | no origin remote configured |
 | 10 | main checkout is not on mainBranch (run ` + "`git checkout <main>`" + ` first) |
 | 11 | cwd is in an unregistered git repo (run ` + "`forktrust config add .`" + `) |
+| 12 | rm/finish could not determine ahead count (no main reference resolved); push origin/main or re-run with --force |
+| 13 | rm: worktree removed and ports released, but ` + "`git branch -D`" + ` failed (the branch lingers) |
 
 ### Inspecting state
 

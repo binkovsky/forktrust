@@ -27,6 +27,7 @@ type finishResult struct {
 	Pushed            bool   `json:"pushed"`
 	WorktreeRemoved   bool   `json:"worktree_removed"`
 	BranchDeleted     bool   `json:"branch_deleted"`
+	BranchKept        bool   `json:"branch_kept"` // R5: same shape as rmResult — branch -D failed but worktree was removed
 }
 
 // rmResult is the stable JSON schema for `forktrust rm [--json]`.
@@ -38,7 +39,8 @@ type rmResult struct {
 	DryRun           bool   `json:"dry_run"`
 	Force            bool   `json:"force"`
 	UncommittedFiles int    `json:"uncommitted_files"`
-	CommitsAhead     int    `json:"commits_ahead"`          // dry-run accuracy: commits this branch has past main
+	CommitsAhead     int    `json:"commits_ahead"`          // commits this branch has past main; 0 also valid when AheadKnown=false
+	AheadKnown       bool   `json:"ahead_known"`            // false means CommitsAhead is meaningless (no main ref resolved)
 	WouldPushWip     bool   `json:"would_push_wip"`         // dry-run: actual rm would snapshot to wip/*
 	WouldRefuse      string `json:"would_refuse,omitempty"` // dry-run: reason actual rm would refuse, "" if it would proceed
 	WipBranch        string `json:"wip_branch,omitempty"`

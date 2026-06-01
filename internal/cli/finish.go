@@ -106,7 +106,23 @@ func runFinish(_ *cobra.Command, args []string) error {
 
 	notef("finish target: %s (branch %s in %s)", wtPath, branch, proj.Name)
 
-	// 1. Commit any uncommitted WIP on the worktree branch.
+	// 1. Resolve aheadRef FIRST — refuse early if no main ref resolves.
+	// R5 fix: previously runFinish committed WIP and THEN refused at the
+	// aheadRef check, leaving a phantom 'WIP: <slug>' commit that the
+	// dry-run (which refused first, with no side effects) never warned
+	// about. Refuse before any side effect so dry-run matches reality.
+	hasOrigin := git.HasOrigin(proj.Path)
+	aheadRef := ""
+	switch {
+	case hasOrigin && git.HasRemoteBranch(proj.Path, "origin", mainBranch):
+		aheadRef = "origin/" + mainBranch
+	case git.HasBranch(proj.Path, mainBranch):
+		aheadRef = mainBranch
+	default:
+		return coded(ExitAheadUnknown, fmt.Errorf("no main reference resolved (tried origin/%s, %s); push or create %s first", mainBranch, mainBranch, mainBranch))
+	}
+
+	// 2. NOW it's safe to commit uncommitted WIP on the worktree branch.
 	if dirty > 0 {
 		msg := finishMessage
 		if msg == "" {
@@ -121,15 +137,6 @@ func runFinish(_ *cobra.Command, args []string) error {
 		}
 		r.CommittedWIP = true
 	}
-
-	// 2. How many commits ahead of mainBranch? Use origin/<main> if origin
-	// exists (matches what `git push` would compare against); else use local
-	// <main> ref (no-origin / offline path).
-	hasOrigin := git.HasOrigin(proj.Path)
-	aheadRef := "origin/" + mainBranch
-	if !hasOrigin {
-		aheadRef = mainBranch
-	}
 	ahead, err := git.CommitsAhead(wtPath, aheadRef)
 	if err != nil {
 		return err
@@ -140,9 +147,22 @@ func runFinish(_ *cobra.Command, args []string) error {
 		if err := removeWorktree(finishJSON, proj.Path, wtPath, false); err != nil {
 			return err
 		}
-		_, _ = git.Run(proj.Path, "branch", "-D", branch)
 		r.WorktreeRemoved = true
-		r.BranchDeleted = true
+		// Release port block BEFORE branch -D — same order as the post-merge
+		// path — so a branch-delete failure doesn't block port cleanup.
+		if storePath, perr := ports.DefaultPath(); perr == nil {
+			_ = ports.Release(storePath, proj.Path, slug)
+		}
+		if _, err := git.Run(proj.Path, "branch", "-D", branch); err == nil {
+			r.BranchDeleted = true
+		} else {
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintf(os.Stderr, "WARN: worktree removed, but could not delete local branch %s: %v\n", branch, err)
+			fmt.Fprintf(os.Stderr, "  The branch lingers. Investigate: git -C %s branch | grep %s\n", proj.Path, branch)
+			r.BranchKept = true
+			_ = emitFinish(r)
+			return coded(ExitBranchNotDeleted, fmt.Errorf("branch -D %s failed: %w", branch, err))
+		}
 		return emitFinish(r)
 	}
 	notef("branch is %d commit(s) ahead of %s, merging", ahead, aheadRef)
@@ -212,14 +232,26 @@ func runFinish(_ *cobra.Command, args []string) error {
 		return err
 	}
 	r.WorktreeRemoved = true
+
+	// 8. Release any port block this slug owned (no-op if none). Done BEFORE
+	// branch -D so a branch-delete failure still leaves ports released.
+	if storePath, perr := ports.DefaultPath(); perr == nil {
+		_ = ports.Release(storePath, proj.Path, slug)
+	}
+
+	// 9. Delete the local branch. R5 fix: surface failures with exit 13
+	// (same shape as rm) — merge/push/remove already succeeded, but a
+	// silent swallow leaves a stale branch the user thinks is gone.
 	if _, err := git.Run(proj.Path, "branch", "-D", branch); err == nil {
 		notef("deleted local branch %s", branch)
 		r.BranchDeleted = true
-	}
-
-	// 8. Release any port block this slug owned (no-op if none).
-	if storePath, perr := ports.DefaultPath(); perr == nil {
-		_ = ports.Release(storePath, proj.Path, slug)
+	} else {
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintf(os.Stderr, "WARN: merge/push/remove succeeded, but could not delete local branch %s: %v\n", branch, err)
+		fmt.Fprintf(os.Stderr, "  The branch lingers. Investigate: git -C %s branch | grep %s\n", proj.Path, branch)
+		r.BranchKept = true
+		_ = emitFinish(r)
+		return coded(ExitBranchNotDeleted, fmt.Errorf("branch -D %s failed: %w", branch, err))
 	}
 
 	notef("finish done")
@@ -228,23 +260,37 @@ func runFinish(_ *cobra.Command, args []string) error {
 
 func previewFinish(r finishResult, mainBranch, mainPath string) error {
 	// Mirror actual finish logic so the preview never lies about ahead-count,
-	// no-origin behavior, or wrong-branch refusal.
+	// no-origin behavior, or wrong-branch refusal. R4 fix: use the same
+	// HasRemoteBranch+HasBranch cascade as runFinish — previous code used
+	// bare "origin/<main>" which silently reported 0 ahead on fresh clones
+	// where origin/main hasn't been fetched, then real finish refused with
+	// exit 12. Dry-run must match real behavior.
 	hasOrigin := git.HasOrigin(mainPath)
 	r.HasOrigin = hasOrigin
-	aheadRef := "origin/" + mainBranch
-	if !hasOrigin {
+	var aheadRef string
+	switch {
+	case hasOrigin && git.HasRemoteBranch(mainPath, "origin", mainBranch):
+		aheadRef = "origin/" + mainBranch
+	case git.HasBranch(mainPath, mainBranch):
 		aheadRef = mainBranch
 	}
-	ahead, _ := git.CommitsAhead(r.WorktreePath, aheadRef)
+	ahead := 0
+	aheadKnown := aheadRef != ""
+	if aheadKnown {
+		ahead, _ = git.CommitsAhead(r.WorktreePath, aheadRef)
+	}
 	r.CommitsAhead = ahead
 	mainDirty, _ := git.DirtyCount(mainPath)
 	r.MainDirty = mainDirty
 	current, _ := git.CurrentBranch(mainPath)
 	r.MainCurrentBranch = current
 
-	if current != mainBranch {
+	switch {
+	case !aheadKnown:
+		r.WouldRefuse = fmt.Sprintf("no main reference resolved (exit %d). Push origin/%s or create local %s first.", ExitAheadUnknown, mainBranch, mainBranch)
+	case current != mainBranch:
 		r.WouldRefuse = fmt.Sprintf("main checkout on %q, expected %q (exit %d)", current, mainBranch, ExitMainOnWrongBranch)
-	} else if mainDirty > 0 {
+	case mainDirty > 0:
 		r.WouldRefuse = fmt.Sprintf("main checkout is dirty (%d uncommitted file(s)) (exit %d)", mainDirty, ExitDirtyMain)
 	}
 
@@ -259,7 +305,11 @@ func previewFinish(r finishResult, mainBranch, mainPath string) error {
 	fmt.Printf("  main HEAD:      %s%s\n", current, wrongBranchWarn(current, mainBranch))
 	fmt.Printf("  has origin:     %v\n", hasOrigin)
 	fmt.Printf("  uncommitted:    %d file(s)\n", r.UncommittedFiles)
-	fmt.Printf("  ahead of %-7s %d commit(s)\n", aheadRef+":", r.CommitsAhead)
+	if aheadKnown {
+		fmt.Printf("  ahead of %-7s %d commit(s)\n", aheadRef+":", r.CommitsAhead)
+	} else {
+		fmt.Printf("  ahead of main:  ? (unknown — no main reference resolved)\n")
+	}
 	fmt.Printf("  main dirty:     %d file(s)%s\n", mainDirty, dirtyWarn(mainDirty))
 	fmt.Println()
 	if r.WouldRefuse != "" {

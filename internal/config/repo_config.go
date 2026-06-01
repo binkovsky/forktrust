@@ -6,9 +6,25 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/BurntSushi/toml"
 )
+
+// envVarNameRE is the POSIX env var name pattern: a letter or underscore
+// followed by letters/digits/underscores. Used to reject names that would
+// produce broken (or injection-prone) lines in .env.local — e.g. names
+// containing newlines, "=", spaces, or shell metacharacters.
+var envVarNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// reservedEnvVarNames are produced by forktrust itself; users may not
+// override them to keep the .env.local schema stable for tooling.
+var reservedEnvVarNames = map[string]struct{}{
+	"PORT_END":             {},
+	"FORKTRUST_PORT_START": {},
+	"FORKTRUST_PORT_END":   {},
+	"FORKTRUST_PORT_SIZE":  {},
+}
 
 // RepoConfigFile is the canonical filename for the per-repo config that lives
 // at the repository root (committed to the repo).
@@ -94,7 +110,9 @@ func LoadRepoConfig(repoRoot string) (*RepoConfig, error) {
 	return &c, nil
 }
 
-// Validate checks all hooks have required fields for their type.
+// Validate checks all hooks have required fields for their type, and that
+// [ports].vars contains only well-formed, non-duplicate, non-reserved POSIX
+// env var names.
 func (c *RepoConfig) Validate() error {
 	for i, h := range c.Hooks.PostCreate {
 		switch h.Type {
@@ -118,7 +136,59 @@ func (c *RepoConfig) Validate() error {
 			return fmt.Errorf("hook %d: unknown type %q (one of: copy, symlink, command)", i, h.Type)
 		}
 	}
+	if c.Ports != nil {
+		// Hard-fail on the actual security issue (regex violations =
+		// newline/equals/space injection into .env.local). Soft-skip
+		// duplicates and reserved names — those were silently accepted
+		// before v0.6.2 R1, so existing repos must not break on upgrade.
+		// SanitizedVars() is what writers should use to get the filtered
+		// list at runtime.
+		for i, v := range c.Ports.Vars {
+			if !envVarNameRE.MatchString(v) {
+				return fmt.Errorf("[ports].vars[%d] = %q: must match %s (POSIX env var name; newline/equals/space rejected to prevent .env.local injection)", i, v, envVarNameRE.String())
+			}
+		}
+	}
 	return nil
+}
+
+// SanitizedPortsVars returns the user's [ports].vars list with duplicates
+// removed and reserved names dropped, alongside a list of warnings the
+// caller should surface to the user. The regex check ran at parse time, so
+// any entry here is already a well-formed env var name.
+//
+// This is a softer fallback than rejecting at parse time so repos that had
+// `vars=["PORT_END"]` from before v0.6.2 R1 keep working after upgrade.
+func (c *RepoConfig) SanitizedPortsVars() (vars []string, warnings []string) {
+	if c == nil || c.Ports == nil {
+		return nil, nil
+	}
+	// IMPORTANT: when the user SET the vars field at all (even to []),
+	// return an EMPTY slice (not nil). RenderEnv distinguishes nil ("user
+	// didn't specify, use default PORT") from []string{} ("user explicitly
+	// opted out via filter or empty list; emit nothing user-named").
+	//
+	// R5 fix: previously gated on `len(c.Ports.Vars) > 0`, so the natural
+	// opt-out syntax `vars = []` (TOML empty array) returned nil and
+	// stealth-injected PORT. Now: if user wrote any `vars` field at all
+	// (BurntSushi/toml gives us non-nil [] for that), respect the opt-out.
+	if c.Ports.Vars != nil {
+		vars = []string{}
+	}
+	seen := map[string]struct{}{}
+	for _, v := range c.Ports.Vars {
+		if _, reserved := reservedEnvVarNames[v]; reserved {
+			warnings = append(warnings, fmt.Sprintf("[ports].vars: %q is reserved (forktrust always writes this); skipping the duplicate user entry", v))
+			continue
+		}
+		if _, dup := seen[v]; dup {
+			warnings = append(warnings, fmt.Sprintf("[ports].vars: %q appears more than once; keeping the first occurrence", v))
+			continue
+		}
+		seen[v] = struct{}{}
+		vars = append(vars, v)
+	}
+	return vars, warnings
 }
 
 // HasCommandHooks reports whether any post_create hook executes a shell command.

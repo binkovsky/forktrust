@@ -21,9 +21,12 @@ func gitStream(jsonMode bool, dir string, args ...string) error {
 	return git.RunStreamTo(dir, stdout, os.Stderr, args...)
 }
 
-// addWorktreeNew creates a new worktree on a new branch, respecting JSON mode.
-func addWorktreeNew(jsonMode bool, repo, path, branch string) error {
-	return gitStream(jsonMode, repo, "worktree", "add", "-b", branch, path)
+// addWorktreeNew creates a new worktree on a new branch forked from baseRef,
+// respecting JSON mode. baseRef MUST be non-empty (e.g. "origin/main", "main",
+// "HEAD"); the empty-baseRef "current HEAD" path was removed in v0.6.2.
+func addWorktreeNew(jsonMode bool, repo, path, branch, baseRef string) error {
+	args := []string{"worktree", "add", "-b", branch, path, baseRef}
+	return gitStream(jsonMode, repo, args...)
 }
 
 // addWorktreeExisting creates a new worktree checking out an existing branch.

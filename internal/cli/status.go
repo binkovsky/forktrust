@@ -52,6 +52,7 @@ type statusRow struct {
 	IsMain     bool   `json:"is_main"`
 	Ahead      int    `json:"ahead"`
 	Behind     int    `json:"behind"`
+	AheadKnown bool   `json:"ahead_known"` // false means Ahead/Behind are meaningless (no main ref resolved)
 	Dirty      int    `json:"dirty"`
 	PortStart  int    `json:"port_start,omitempty"`
 	PortEnd    int    `json:"port_end,omitempty"`
@@ -136,6 +137,18 @@ func renderStatus() error {
 		if mainBranch == "" {
 			mainBranch = "main"
 		}
+		// Same cascade as rm/finish: prefer origin/<main> only when the
+		// remote-tracking ref actually exists. Without this guard, CommitsAhead
+		// against a missing "origin/<main>" errors and we silently report 0,
+		// telling the user every worktree is in sync when it isn't.
+		hasOrigin := git.HasOrigin(proj.Path)
+		var aheadRef string
+		switch {
+		case hasOrigin && git.HasRemoteBranch(proj.Path, "origin", mainBranch):
+			aheadRef = "origin/" + mainBranch
+		case git.HasBranch(proj.Path, mainBranch):
+			aheadRef = mainBranch
+		}
 		for _, wt := range wts {
 			isMain := samePath(wt.Path, proj.Path)
 			slug := ""
@@ -145,10 +158,12 @@ func renderStatus() error {
 			dirty, _ := git.DirtyCount(wt.Path)
 			ahead := 0
 			behind := 0
-			if !isMain {
-				ahead, _ = git.CommitsAhead(wt.Path, "origin/"+mainBranch)
-				behind, _ = git.CommitsBehind(wt.Path, "origin/"+mainBranch)
+			aheadKnown := aheadRef != ""
+			if !isMain && aheadKnown {
+				ahead, _ = git.CommitsAhead(wt.Path, aheadRef)
+				behind, _ = git.CommitsBehind(wt.Path, aheadRef)
 			}
+			_ = aheadKnown
 			age := int64(0)
 			if info, err := os.Stat(wt.Path); err == nil {
 				age = int64(time.Since(info.ModTime()).Seconds())
@@ -161,6 +176,7 @@ func renderStatus() error {
 				IsMain:     isMain,
 				Ahead:      ahead,
 				Behind:     behind,
+				AheadKnown: aheadKnown,
 				Dirty:      dirty,
 				AgeSeconds: age,
 			}
@@ -187,8 +203,16 @@ func renderStatus() error {
 		if r.PortStart > 0 {
 			ports = fmt.Sprintf("%d-%d", r.PortStart, r.PortEnd)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\n",
-			r.Project, slug, r.Branch, r.Ahead, r.Behind, r.Dirty, ports, humanizeAge(r.AgeSeconds))
+		// Mark ahead/behind as "?" when no main reference resolved — the
+		// R4 fix for "status silently reports 0/0 and lies".
+		aheadCol := fmt.Sprintf("%d", r.Ahead)
+		behindCol := fmt.Sprintf("%d", r.Behind)
+		if !r.IsMain && !r.AheadKnown {
+			aheadCol = "?"
+			behindCol = "?"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+			r.Project, slug, r.Branch, aheadCol, behindCol, r.Dirty, ports, humanizeAge(r.AgeSeconds))
 	}
 	if len(rows) == 0 {
 		fmt.Fprintln(os.Stdout, "no worktrees")

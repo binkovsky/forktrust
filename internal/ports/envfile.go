@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/binkovsky/forktrust/internal/pathsafe"
 )
 
 // EnvFileName is the canonical sidecar file forktrust writes port assignments
@@ -18,8 +20,13 @@ const EnvFileName = ".env.local"
 //
 // Each name in vars gets the start port. Use multiple names to satisfy several
 // frameworks at once (e.g. ["PORT", "SERVER_PORT", "FLASK_RUN_PORT"]).
+//
+// vars is interpreted positionally: nil/missing means "use the default PORT",
+// non-nil with len==0 means "user explicitly opted out of writing any
+// user-named port variable — only emit PORT_END + FORKTRUST_*". This lets
+// SanitizedPortsVars return [] without stealth-injecting PORT (R4 fix).
 func RenderEnv(b Block, vars []string) string {
-	if len(vars) == 0 {
+	if vars == nil {
 		vars = []string{"PORT"}
 	}
 	var sb strings.Builder
@@ -35,17 +42,34 @@ func RenderEnv(b Block, vars []string) string {
 	return sb.String()
 }
 
-// WriteEnv writes RenderEnv output to <worktreePath>/.env.local. If a
-// .env.local already exists and was NOT written by forktrust (no marker
-// header), the existing file is preserved untouched and an error is returned
-// so the user sees the conflict.
+// WriteEnv writes RenderEnv output to <worktreePath>/.env.local. Refuses if:
+//   - SafeJoin would escape worktreePath (lexical or symlink ancestor)
+//   - The path exists as a regular file NOT written by forktrust (preserves
+//     user-authored env files)
+//   - At write time, the target is a symlink (O_NOFOLLOW; closes the TOCTOU
+//     window between any earlier check and the actual write)
+//
+// The pre-check (existing-content marker) uses Lstat to avoid following a
+// symlink; the actual write uses pathsafe.SafeWriteFile which opens with
+// O_NOFOLLOW for atomic symlink refusal at the syscall boundary.
 func WriteEnv(worktreePath string, b Block, vars []string) error {
 	target := filepath.Join(worktreePath, EnvFileName)
-	if existing, err := os.ReadFile(target); err == nil {
-		if !strings.HasPrefix(string(existing), "# Managed by forktrust") {
-			return fmt.Errorf("%s already exists and was not written by forktrust; refusing to overwrite", target)
+
+	// Pre-flight: preserve a user-authored .env.local. Use Lstat so a
+	// symlinked .env.local is treated as "exists but not ours" without
+	// dereferencing it (ReadFile would follow). The post-check via
+	// SafeWriteFile's O_NOFOLLOW is the actual security guarantee.
+	if info, err := os.Lstat(target); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symlink; refusing to write (would escape worktree)", target)
+		}
+		// Regular file: peek at the marker.
+		if data, err := os.ReadFile(target); err == nil {
+			if !strings.HasPrefix(string(data), "# Managed by forktrust") {
+				return fmt.Errorf("%s already exists and was not written by forktrust; refusing to overwrite", target)
+			}
 		}
 	}
 	body := RenderEnv(b, vars)
-	return os.WriteFile(target, []byte(body), 0o600)
+	return pathsafe.SafeWriteFile(worktreePath, EnvFileName, []byte(body), 0o600)
 }

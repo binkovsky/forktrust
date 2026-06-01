@@ -20,7 +20,7 @@ forktrust new <slug>      # create isolated worktree at .forktrust/worktrees/<sl
 forktrust finish <slug>   # commit WIP + merge to main + push + cleanup
 ```
 
-To abandon without merging (WIP is snapshotted to `wip/<branch>-YYYYMMDD` on origin first):
+To abandon without merging (WIP is snapshotted to `wip/<branch>-YYYYMMDD-HHMMSS` on origin first):
 
 ```bash
 forktrust rm <slug>
@@ -62,6 +62,10 @@ run  = "pnpm install"   # requires `forktrust trust`
 | 7 | slug matches multiple projects |
 | 8 | hook failed or untrusted command hook |
 | 9 | no origin remote configured |
+| 10 | main checkout on wrong branch |
+| 11 | cwd is in unregistered git repo |
+| 12 | rm/finish could not determine ahead count |
+| 13 | rm: worktree removed but branch -D failed |
 
 ## Releases
 

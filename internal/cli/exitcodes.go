@@ -15,6 +15,8 @@ const (
 	ExitNoOriginRemote    = 9  // operation requires origin but none configured
 	ExitMainOnWrongBranch = 10 // finish refused: main checkout is not on the mainBranch
 	ExitCwdNotRegistered  = 11 // cwd is in a git repo that is not registered (and --project not given)
+	ExitAheadUnknown      = 12 // rm/finish refused: could not determine if branch has unpushed work (no main reference resolved)
+	ExitBranchNotDeleted  = 13 // rm: worktree removed and ports released, but `git branch -D` failed (branch lingers)
 )
 
 // CodedError carries a structured exit code through cobra's error path.

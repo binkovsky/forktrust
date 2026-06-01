@@ -12,6 +12,7 @@ import (
 	"github.com/binkovsky/forktrust/internal/config"
 	"github.com/binkovsky/forktrust/internal/git"
 	"github.com/binkovsky/forktrust/internal/hooks"
+	"github.com/binkovsky/forktrust/internal/pathsafe"
 	"github.com/binkovsky/forktrust/internal/ports"
 	"github.com/binkovsky/forktrust/internal/predict"
 )
@@ -21,6 +22,7 @@ var (
 	newProject string
 	newJSON    bool
 	newNoHooks bool
+	newFrom    string
 )
 
 var newCmd = &cobra.Command{
@@ -47,10 +49,25 @@ func init() {
 	newCmd.Flags().StringVarP(&newProject, "project", "p", "", "target project name (required if more than one is registered)")
 	newCmd.Flags().BoolVar(&newJSON, "json", false, "emit a structured JSON result on stdout (one object)")
 	newCmd.Flags().BoolVar(&newNoHooks, "no-hooks", false, "skip command hooks (copy/symlink still run); also skips the trust gate")
+	newCmd.Flags().StringVar(&newFrom, "from", "", "explicit base ref for the new branch (default cascade: origin/<mainBranch> > <mainBranch> > HEAD); pass a non-empty ref or omit")
 }
 
-func runNew(_ *cobra.Command, args []string) error {
+// rejectEmptyFrom catches the script footgun where `--from "$VAR"` becomes
+// `--from ""` because VAR is unset. Treating that as "use cascade" silently
+// changes the base ref the user explicitly tried to pin.
+func rejectEmptyFromIfFlagPassed(cmd *cobra.Command) error {
+	if cmd.Flags().Changed("from") && newFrom == "" {
+		return fmt.Errorf("--from cannot be empty (got \"\"); either omit --from to use the cascade, or pass a non-empty ref")
+	}
+	return nil
+}
+
+func runNew(cmd *cobra.Command, args []string) error {
 	slug := args[0]
+
+	if err := rejectEmptyFromIfFlagPassed(cmd); err != nil {
+		return err
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -107,14 +124,51 @@ func runNew(_ *cobra.Command, args []string) error {
 	}
 
 	if git.HasBranch(proj.Path, branch) {
+		// Reuse path. --from cannot meaningfully apply: git worktree add of
+		// an existing branch checks out its tip, not the requested base ref.
+		// Refuse explicitly rather than silently dropping the flag.
+		if newFrom != "" {
+			fmt.Fprintf(os.Stderr, "REFUSE: branch %s already exists; --from %q cannot rebase an existing branch.\n", branch, newFrom)
+			fmt.Fprintln(os.Stderr, "Either drop --from to reuse the existing branch tip, or delete the branch first:")
+			fmt.Fprintf(os.Stderr, "  git -C %s branch -D %s\n", proj.Path, branch)
+			return coded(ExitGenericError, fmt.Errorf("--from incompatible with existing branch %s", branch))
+		}
 		newf("branch %s exists, reusing", branch)
 		r.BranchReused = true
 		if err := addWorktreeExisting(newJSON, proj.Path, wtPath, branch); err != nil {
 			return fmt.Errorf("worktree add: %w", err)
 		}
 	} else {
-		newf("creating worktree %s on new branch %s (from current HEAD)", wtPath, branch)
-		if err := addWorktreeNew(newJSON, proj.Path, wtPath, branch); err != nil {
+		// Resolve base ref. Default cascade prevents the v0.6.1 footgun
+		// where a main checkout on `dev` made `fork/<slug>` inherit dev's
+		// commits, which a later finish silently merged into main.
+		//
+		// Uses refs-namespaced helpers so a tag/local branch named "main"
+		// cannot win over the remote branch.
+		mainBranch := proj.MainBranch
+		if mainBranch == "" {
+			mainBranch = "main"
+		}
+		var baseRef, baseDesc string
+		switch {
+		case newFrom != "":
+			baseRef = newFrom
+			baseDesc = newFrom + " (--from)"
+		case git.HasOrigin(proj.Path) && git.HasRemoteBranch(proj.Path, "origin", mainBranch):
+			baseRef = "origin/" + mainBranch
+			baseDesc = baseRef
+		case git.HasBranch(proj.Path, mainBranch):
+			baseRef = mainBranch
+			baseDesc = baseRef + " (local)"
+		default:
+			// Fresh / empty repo edge: no main ref anywhere. Use HEAD as a
+			// last resort. We never pass an empty baseRef to git — addWorktreeNew
+			// now requires one.
+			baseRef = "HEAD"
+			baseDesc = "HEAD (no main ref found)"
+		}
+		newf("creating worktree %s on new branch %s (from %s)", wtPath, branch, baseDesc)
+		if err := addWorktreeNew(newJSON, proj.Path, wtPath, branch, baseRef); err != nil {
 			return fmt.Errorf("worktree add: %w", err)
 		}
 	}
@@ -148,7 +202,16 @@ func runNew(_ *cobra.Command, args []string) error {
 			if perr != nil {
 				return fmt.Errorf("port allocation: %w", perr)
 			}
-			if perr := ports.WriteEnv(wtPath, blk, repoCfg.Ports.Vars); perr != nil {
+			// SanitizedPortsVars drops duplicates and reserved names with
+			// a warning instead of hard-failing — keeps repos that had
+			// vars=["PORT_END"] before v0.6.2 R1 working after upgrade.
+			cleanVars, warns := repoCfg.SanitizedPortsVars()
+			for _, w := range warns {
+				if !newJSON {
+					fmt.Fprintf(os.Stderr, "warn: %s\n", w)
+				}
+			}
+			if perr := ports.WriteEnv(wtPath, blk, cleanVars); perr != nil {
 				_ = ports.Release(storePath, proj.Path, slug)
 				return fmt.Errorf("port .env.local write: %w", perr)
 			}
@@ -335,11 +398,21 @@ func copyDotEnvFiles(src, dst string) int {
 	candidates := []string{".env", ".env.local", ".env.development", ".env.production"}
 	copied := 0
 	for _, name := range candidates {
-		data, err := os.ReadFile(filepath.Join(src, name))
+		// Source side: tolerate a tracked symlink in main checkout pointing
+		// at user-controlled paths (a deliberate user pattern). Read via
+		// pathsafe so we refuse if it escapes src root.
+		srcPath, err := pathsafe.SafeJoin(src, name)
 		if err != nil {
 			continue
 		}
-		if err := os.WriteFile(filepath.Join(dst, name), data, 0o600); err == nil {
+		data, err := os.ReadFile(srcPath)
+		if err != nil {
+			continue
+		}
+		// Destination: write via pathsafe.SafeWriteFile so a pre-existing
+		// symlink at dst/<name> (planted by an earlier hook or hostile
+		// fixture) cannot redirect the write outside the worktree.
+		if err := pathsafe.SafeWriteFile(dst, name, data, 0o600); err == nil {
 			copied++
 		}
 	}

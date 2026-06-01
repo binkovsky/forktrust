@@ -28,7 +28,7 @@ A git-worktree manager that isolates parallel AI coding sessions. Each task gets
    ```bash
    forktrust rm <task-slug>
    ```
-   This pushes uncommitted WIP to `wip/<branch>-YYYYMMDD` on origin before removing, so work survives.
+   This pushes uncommitted WIP to `wip/<branch>-YYYYMMDD-HHMMSS` on origin before removing, so work survives.
 
 ## Hard safety guarantees you can rely on
 
@@ -64,6 +64,8 @@ forktrust finish my-task --dry-run    # preview without executing
 | 9 | no origin remote configured | tell user to add origin or use `--force` knowing the risk |
 | 10 | main checkout on the wrong branch | run `git -C <repo> checkout <mainBranch>` first |
 | 11 | cwd is in an unregistered git repo | run `forktrust config add .` or use `--project` |
+| 12 | rm/finish could not determine ahead count | push origin/main, or re-run with `--force` (keeps local branch) |
+| 13 | rm: worktree removed, port released, branch -D failed | investigate with `git -C <repo> branch | grep fork/<slug>` |
 
 ## When NOT to use forktrust
 

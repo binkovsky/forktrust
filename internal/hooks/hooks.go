@@ -13,6 +13,7 @@ import (
 	"text/template"
 
 	"github.com/binkovsky/forktrust/internal/config"
+	"github.com/binkovsky/forktrust/internal/pathsafe"
 )
 
 // Context is the template/runtime context passed to every hook.
@@ -80,11 +81,11 @@ func doCopy(h config.Hook, ctx Context) (Result, error) {
 		return Result{Type: h.Type, Summary: summary, Err: err}, err
 	}
 	if info.IsDir() {
-		if err := copyDir(src, dst); err != nil {
+		if err := copyDir(src, dst, ctx.Path); err != nil {
 			return Result{Type: h.Type, Summary: summary, Err: err}, err
 		}
 	} else {
-		if err := copyFile(src, dst); err != nil {
+		if err := copyFile(src, dst, ctx.Path); err != nil {
 			return Result{Type: h.Type, Summary: summary, Err: err}, err
 		}
 	}
@@ -205,7 +206,32 @@ func truncate(s string, n int) string {
 	return s[:n] + "..."
 }
 
-func copyFile(src, dst string) error {
+// copyFile reads src and writes to dst with leaf-level O_NOFOLLOW. Both src
+// and dst MUST already be secureJoin-validated by the caller.
+//
+// dst-side protection (the security guarantees this function actually offers):
+//
+//   - REFUSE if any ancestor directory between dstRoot and dst is a symlink.
+//     This closes the R4 'intra-worktree ancestor symlink → write into
+//     node_modules/.bin' attack: SafeJoin accepts ancestor symlinks pointing
+//     inside the worktree (legitimate refactor pattern for reads), but writes
+//     through such an ancestor would let a copy hook with dst='bin/cleanup'
+//     land an executable in node_modules/.bin/cleanup because `bin` resolves
+//     to .bin. We refuse all ancestor symlinks for writes — strictly safer
+//     than the R4 'follow internal symlinks' permissiveness.
+//
+//   - REFUSE leaf-level symlink (O_NOFOLLOW) if dst exists as a symlink.
+//     A worktree-internal leaf symlink at dst is rare (post_create symlink
+//     hook followed by copy hook on the same path is the only known pattern,
+//     and that pattern can be expressed as just-symlink-hook). Refusing is
+//     simpler than the R4 broken 'allow if internal' branch.
+//
+// dstRoot is the worktree root used to evaluate ancestor symlinks. Callers
+// pass ctx.Path.
+func copyFile(src, dst, dstRoot string) error {
+	if err := refuseAncestorSymlinks(dstRoot, dst); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
@@ -213,15 +239,52 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	info, _ := os.Stat(src)
+	srcInfo, _ := os.Stat(src)
 	mode := os.FileMode(0o644)
-	if info != nil {
-		mode = info.Mode().Perm()
+	if srcInfo != nil {
+		mode = srcInfo.Mode().Perm()
 	}
-	return os.WriteFile(dst, data, mode)
+	flag := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	f, err := pathsafe.OpenLeafNoFollow(dst, flag, mode)
+	if err != nil {
+		return fmt.Errorf("safe copy open %s: %w", dst, err)
+	}
+	defer f.Close()
+	_, err = f.Write(data)
+	return err
 }
 
-func copyDir(src, dst string) error {
+// refuseAncestorSymlinks walks every directory component between root and
+// fullPath (exclusive of the leaf), Lstat-ing each. If any is a symlink we
+// refuse — writes through ancestor symlinks let a benign-looking dst escape
+// to anywhere the symlink points, even when the target is inside the
+// worktree (e.g. node_modules/.bin is "inside" but on the executable PATH).
+func refuseAncestorSymlinks(root, fullPath string) error {
+	rel, err := filepath.Rel(root, fullPath)
+	if err != nil {
+		return err
+	}
+	parts := strings.Split(rel, string(filepath.Separator))
+	if len(parts) <= 1 {
+		return nil // file directly in root, no ancestors to check
+	}
+	cur := root
+	for _, p := range parts[:len(parts)-1] {
+		cur = filepath.Join(cur, p)
+		info, err := os.Lstat(cur)
+		if err != nil {
+			// component doesn't exist yet — that's fine, MkdirAll will
+			// create real dirs (not symlinks) below it.
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("write to %s refused: ancestor %s is a symlink (would escape via link target)", fullPath, cur)
+		}
+	}
+	return nil
+}
+
+func copyDir(src, dst, dstRoot string) error {
 	return filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -243,9 +306,17 @@ func copyDir(src, dst string) error {
 			}
 		}
 		if info.IsDir() {
+			// Guard MkdirAll with the same ancestor-symlink check used by
+			// copyFile: a prior symlink hook could have planted a symlink at
+			// a parent component of `target` pointing outside the worktree
+			// (e.g. bin -> /etc/). Without this guard MkdirAll follows it
+			// and creates directories under the attacker-controlled target.
+			if err := refuseAncestorSymlinks(dstRoot, target); err != nil {
+				return err
+			}
 			return os.MkdirAll(target, info.Mode().Perm())
 		}
-		return copyFile(p, target)
+		return copyFile(p, target, dstRoot)
 	})
 }
 

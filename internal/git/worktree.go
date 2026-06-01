@@ -71,9 +71,26 @@ func DirtyCount(wt string) (int, error) {
 	return strings.Count(out, "\n") + 1, nil
 }
 
-// AddWorktreeNewBranch creates a new worktree at path on a new branch (forked from current HEAD).
-func AddWorktreeNewBranch(repo, path, branch string) error {
-	return RunStream(repo, "worktree", "add", "-b", branch, path)
+// AddWorktreeNewBranchFrom creates a new worktree at path on a new branch
+// forked from baseRef (e.g. "main", "origin/main", a SHA). Callers always
+// know which commit their work starts from instead of inheriting whatever
+// the main checkout happens to be on.
+//
+// The unscoped "branch from current HEAD" variant was removed in v0.6.2 —
+// it was a footgun that caused fork branches to inherit dev-only commits
+// when the main checkout was on the wrong branch. If you really need
+// "current HEAD" semantics, pass "HEAD" explicitly as baseRef.
+func AddWorktreeNewBranchFrom(repo, path, branch, baseRef string) error {
+	return RunStream(repo, "worktree", "add", "-b", branch, path, baseRef)
+}
+
+// HasRemoteBranch returns true if refs/remotes/<remote>/<branch> exists.
+// Use this instead of bare HasRef("origin/main") — `git rev-parse --verify
+// origin/main` would also match a tag named "origin/main" or a local branch
+// named "origin/main" in some setups.
+func HasRemoteBranch(repo, remote, branch string) bool {
+	_, err := Run(repo, "show-ref", "--verify", "--quiet", "refs/remotes/"+remote+"/"+branch)
+	return err == nil
 }
 
 // AddWorktreeExistingBranch creates a new worktree at path checking out an existing branch.
