@@ -88,6 +88,20 @@ func TestIsForktrustManaged(t *testing.T) {
 			t.Error("expected false for missing file, got true")
 		}
 	})
+
+	t.Run("symlink to file with exact header returns false", func(t *testing.T) {
+		// A symlink whose target starts with the exact managed header must NOT
+		// be treated as forktrust-managed. The symlink itself is user data —
+		// deleting it silently would lose the link without the user knowing.
+		target := write("target.env.local", envLocalManagedHeader+"PORT=3000\n")
+		link := filepath.Join(tmp, "symlink.env.local")
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatalf("Symlink: %v", err)
+		}
+		if isForktrustManaged(link) {
+			t.Error("expected false for symlink (even with exact-header target), got true")
+		}
+	})
 }
 
 // TestIgnoredCount_EnvLocalHandling tests the exact conditions under which
@@ -198,6 +212,29 @@ func TestIgnoredCount_EnvLocalHandling(t *testing.T) {
 		}
 		if n == 0 {
 			t.Error("expected IgnoredCount > 0: secret.log with managed header must still be counted")
+		}
+	})
+
+	t.Run("root .env.local symlink with exact-header target is counted (not skipped)", func(t *testing.T) {
+		// Regression test for the symlink bypass: a symlink at .env.local whose
+		// target starts with the exact managed header must NOT be treated as
+		// forktrust-managed. The symlink itself is user data.
+		repo := setup(t, ".env.local")
+		// Create an external file with the exact managed header as the target
+		extFile := filepath.Join(repo, "external_env")
+		if err := os.WriteFile(extFile, []byte(envLocalManagedHeader+"PORT=9999\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(repo, ".env.local")
+		if err := os.Symlink(extFile, link); err != nil {
+			t.Fatal(err)
+		}
+		n, err := IgnoredCount(repo)
+		if err != nil {
+			t.Fatalf("IgnoredCount error: %v", err)
+		}
+		if n == 0 {
+			t.Error("expected IgnoredCount > 0: .env.local symlink with exact-header target must be counted, not skipped")
 		}
 	})
 }

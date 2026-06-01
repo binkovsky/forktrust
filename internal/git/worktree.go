@@ -122,6 +122,14 @@ func IgnoredCount(wt string) (int, error) {
 // merely starts with "# Managed by forktrust" but has a different continuation
 // (e.g. "# Managed by forktrust but actually mine") returns false.
 func isForktrustManaged(path string) bool {
+	// Must be a regular file — not a symlink. A symlink to an external file
+	// whose content starts with the managed header would otherwise bypass the
+	// ignored-file guard (symlink would be silently deleted while the target
+	// survives, and the user is unaware the link existed).
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return false
