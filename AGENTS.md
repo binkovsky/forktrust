@@ -28,7 +28,7 @@ A git-worktree manager that isolates parallel AI coding sessions. Each task gets
    ```bash
    forktrust rm <task-slug>
    ```
-   This pushes uncommitted WIP to `wip/<branch>-YYYYMMDD-HHMMSS` on origin before removing, so work survives.
+   This pushes uncommitted WIP to `wip/<branch>-YYYYMMDD-HHMMSS-<sha7>` on origin before removing, so work survives.
 
 ## Hard safety guarantees you can rely on
 

@@ -172,6 +172,21 @@ func ChangedFiles(wt, refspec string) ([]string, error) {
 	return out, nil
 }
 
+// ShortSHA returns the 7-character abbreviated commit SHA for HEAD in the
+// given worktree/repo. Used to build unique wip/* branch names that survive
+// same-second rm invocations: YYYYMMDD-HHMMSS alone is not unique when two
+// consecutive rm runs happen within the same wall-clock second. The SHA is
+// derived from the actual tip commit (after any WIP auto-commit in runRm),
+// so it is guaranteed unique across all branch states.
+// Returns empty string on any git error so callers can fall back gracefully.
+func ShortSHA(repo string) string {
+	out, err := Run(repo, "rev-parse", "--short", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
 // HasOrigin returns true if an "origin" remote is configured in the repo.
 func HasOrigin(repo string) bool {
 	_, err := Run(repo, "remote", "get-url", "origin")

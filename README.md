@@ -21,7 +21,7 @@ Parallel AI coding sessions break in predictable ways. `forktrust` is opinionate
 |---|---|
 | Two agents edit the same checkout, one overwrites the other | Each agent gets its own worktree at `.forktrust/worktrees/<slug>/` |
 | Agent auto-resolves a merge conflict and silently picks the wrong side | `finish` REFUSES on any conflict. No `--strategy ours/theirs`. Ever. |
-| Session ends with uncommitted work; worktree removed; work gone | `rm` ALWAYS pushes to `wip/<branch>-YYYYMMDD-HHMMSS` on origin first |
+| Session ends with uncommitted work; worktree removed; work gone | `rm` ALWAYS pushes to `wip/<branch>-YYYYMMDD-HHMMSS-<sha7>` on origin first |
 | Three `pnpm install` runs collide on `pnpm-lock.yaml` | Symlink hook shares `node_modules` from main; install runs once |
 | Three dev servers fight over port 3000 | Per-worktree aligned port block (3000-3009, 3010-3019, ...) auto-written to `.env.local` |
 | Agent edits files in the main checkout by accident | `.forktrust/` auto-added to `.git/info/exclude` (never committed) |
@@ -118,7 +118,7 @@ Any future edit to `.forktrustconfig` auto-revokes trust until you re-run `forkt
 | `forktrust new <slug>` | Create worktree at `.forktrust/worktrees/<slug>` on branch `fork/<slug>` |
 | `forktrust list` | All worktrees across all registered repos (use `--json`) |
 | `forktrust finish <slug>` | Commit WIP, merge `--no-ff` to main, push, cleanup. Refuses on conflict |
-| `forktrust rm <slug>` | Abandon, snapshotting WIP to `wip/<branch>-YYYYMMDD-HHMMSS` first |
+| `forktrust rm <slug>` | Abandon, snapshotting WIP to `wip/<branch>-YYYYMMDD-HHMMSS-<sha7>` first |
 | `forktrust ai <slug>` | Launch configured AI tool in the worktree |
 | `forktrust trust [path]` | Approve `.forktrustconfig` command hooks for this repo |
 | `forktrust config add <path>` | Register a repo with forktrust |

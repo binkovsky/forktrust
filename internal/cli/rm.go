@@ -26,7 +26,7 @@ var rmCmd = &cobra.Command{
 	Long: `Abandon a worktree without merging to main. Pipeline:
 
   1. if there are uncommitted changes, commits them and pushes the branch
-     to origin as wip/<branch>-YYYYMMDD-HHMMSS (the never-lose-WIP guarantee)
+     to origin as wip/<branch>-YYYYMMDD-HHMMSS-<sha7> (the never-lose-WIP guarantee)
   2. removes the worktree
   3. deletes the local branch only if WIP was safely pushed or never existed
 
@@ -100,8 +100,20 @@ func runRm(_ *cobra.Command, args []string) error {
 	hasOrigin := git.HasOrigin(wtPath)
 	ahead, aheadKnown := computeAheadCascade(wtPath, mainBranch, hasOrigin)
 
+	// wipBranch is computed lazily (see buildWipBranch below) so the SHA
+	// component reflects the FINAL tip commit — after any uncommitted WIP is
+	// committed — making same-second collision structurally impossible.
 	stamp := time.Now().Format("20060102-150405")
-	wipBranch := fmt.Sprintf("wip/%s-%s", strings.TrimPrefix(branch, "fork/"), stamp)
+	buildWipBranch := func(wtPath string) string {
+		slug := strings.TrimPrefix(branch, "fork/")
+		sha := git.ShortSHA(wtPath)
+		if sha == "" {
+			return fmt.Sprintf("wip/%s-%s", slug, stamp)
+		}
+		return fmt.Sprintf("wip/%s-%s-%s", slug, stamp, sha)
+	}
+	// wipBranch for dry-run preview (uses current HEAD, before any WIP commit).
+	wipBranch := buildWipBranch(wtPath)
 
 	r := rmResult{
 		Project:          proj.Name,
@@ -147,7 +159,7 @@ func runRm(_ *cobra.Command, args []string) error {
 	// -unpushed commits ahead of main. This closes the never-lose-WIP gap.
 	if (dirty > 0 || ahead > 0) && !rmForce {
 		if dirty > 0 {
-			rmf("%d uncommitted change(s), committing + pushing as %s", dirty, wipBranch)
+			rmf("%d uncommitted change(s), committing before snapshot", dirty)
 			if _, err := git.Run(wtPath, "add", "-A"); err != nil {
 				return err
 			}
@@ -155,6 +167,13 @@ func runRm(_ *cobra.Command, args []string) error {
 			if err := gitStream(rmJSON, wtPath, "commit", "-m", commitMsg); err != nil {
 				return coded(ExitHookFailed, fmt.Errorf("WIP commit failed (pre-commit hook?): %w. Use --force to drop the WIP", err))
 			}
+		}
+		// Rebuild wipBranch AFTER any WIP commit so the SHA component
+		// reflects the final tip. This makes same-second collision impossible:
+		// two rm runs on different branches always have different SHAs.
+		wipBranch = buildWipBranch(wtPath)
+		if dirty > 0 {
+			rmf("pushing snapshot as %s", wipBranch)
 		} else {
 			rmf("0 uncommitted but %d commit(s) ahead of %s — pushing as %s", ahead, mainBranch, wipBranch)
 		}

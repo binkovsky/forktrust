@@ -20,7 +20,7 @@ forktrust new <slug>      # create isolated worktree at .forktrust/worktrees/<sl
 forktrust finish <slug>   # commit WIP + merge to main + push + cleanup
 ```
 
-To abandon without merging (WIP is snapshotted to `wip/<branch>-YYYYMMDD-HHMMSS` on origin first):
+To abandon without merging (WIP is snapshotted to `wip/<branch>-YYYYMMDD-HHMMSS-<sha7>` on origin first):
 
 ```bash
 forktrust rm <slug>
