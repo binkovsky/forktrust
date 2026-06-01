@@ -39,7 +39,9 @@ Exit codes:
   6   no worktree matching slug
   7   slug matches worktrees in multiple projects
   9   no origin remote configured
-  12  could not determine ahead count (no main reference resolved); re-run with --force`,
+  12  could not determine ahead count (no main reference resolved); re-run with --force
+  13  worktree removed but git branch -D failed (branch lingers)
+  14  worktree has ignored files that would be permanently deleted`,
 	Args: cobra.ExactArgs(1),
 	RunE: runRm,
 }
@@ -155,6 +157,30 @@ func runRm(_ *cobra.Command, args []string) error {
 
 	rmf("target: %s (branch %s in %s)", wtPath, branch, proj.Name)
 
+	// PRE-FLIGHT: refuse before any side effect (commit / push / remove).
+	// These checks must run BEFORE the snapshot block so we never create a
+	// WIP commit or push wip/* and then refuse — leaving partially-applied
+	// state and a confusing error.
+	if !rmForce {
+		// 1. Ignored files would be silently deleted by git worktree remove.
+		if ignoredN, _ := git.IgnoredCount(wtPath); ignoredN > 0 {
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintf(os.Stderr, "REFUSE: worktree has %d ignored file(s) (e.g. secret.log, build artifacts)\n", ignoredN)
+			fmt.Fprintln(os.Stderr, "that are NOT tracked by git and would be PERMANENTLY DELETED by `git worktree remove`.")
+			fmt.Fprintln(os.Stderr, "Move them out of the worktree first, then re-run.")
+			fmt.Fprintf(os.Stderr, "List them: git -C %s ls-files --others --ignored --exclude-standard\n", wtPath)
+			fmt.Fprintf(os.Stderr, "Or drop them: forktrust rm %s --force\n", slug)
+			return coded(ExitIgnoredFiles, fmt.Errorf("worktree has %d ignored file(s) that would be lost", ignoredN))
+		}
+		// 2. No-origin refuse: if there is work to snapshot but nowhere to push,
+		// refuse now rather than after the WIP commit has been made.
+		if (dirty > 0 || ahead > 0) && !hasOrigin {
+			fmt.Fprintln(os.Stderr, "REFUSE: no origin remote, WIP would only be local.")
+			fmt.Fprintln(os.Stderr, "Re-run with --force to remove anyway (keeps local branch with the commits).")
+			return coded(ExitNoOriginRemote, fmt.Errorf("no origin remote"))
+		}
+	}
+
 	// Snapshot path triggers on EITHER uncommitted changes OR committed-but-
 	// -unpushed commits ahead of main. This closes the never-lose-WIP gap.
 	if (dirty > 0 || ahead > 0) && !rmForce {
@@ -178,6 +204,9 @@ func runRm(_ *cobra.Command, args []string) error {
 			rmf("0 uncommitted but %d commit(s) ahead of %s — pushing as %s", ahead, mainBranch, wipBranch)
 		}
 		if !hasOrigin {
+			// Should be unreachable after the pre-flight above; kept as a
+			// safety net in case rmForce changed mid-flight (it can't, but
+			// belt + suspenders on irreversible operations).
 			fmt.Fprintln(os.Stderr, "REFUSE: no origin remote, WIP would only be local.")
 			fmt.Fprintln(os.Stderr, "Re-run with --force to remove anyway (keeps local branch with the commits).")
 			return coded(ExitNoOriginRemote, fmt.Errorf("no origin remote"))
@@ -194,21 +223,7 @@ func runRm(_ *cobra.Command, args []string) error {
 		r.WipPushed = true
 	}
 
-	// Guard against silently losing ignored files. git worktree remove deletes
-	// them without warning because git status --porcelain does not list them.
-	// Allowlist .env.local: forktrust writes it and it is intentionally ignored.
-	if !rmForce {
-		ignoredN, _ := git.IgnoredCount(wtPath, []string{".env.local"})
-		if ignoredN > 0 {
-			fmt.Fprintln(os.Stderr)
-			fmt.Fprintf(os.Stderr, "REFUSE: worktree has %d ignored file(s) (e.g. secret.log, build artifacts)\n", ignoredN)
-			fmt.Fprintln(os.Stderr, "that are NOT tracked by git and would be PERMANENTLY DELETED by `git worktree remove`.")
-			fmt.Fprintln(os.Stderr, "Move them out of the worktree first, then re-run.")
-			fmt.Fprintf(os.Stderr, "List them: git -C %s ls-files --others --ignored --exclude-standard\n", wtPath)
-			fmt.Fprintf(os.Stderr, "Or drop them: forktrust rm %s --force\n", slug)
-			return coded(ExitIgnoredFiles, fmt.Errorf("worktree has %d ignored file(s) that would be lost", ignoredN))
-		}
-	}
+	// (ignored-file and no-origin pre-flights already ran above; no repeated check needed)
 
 	if err := removeWorktree(rmJSON, proj.Path, wtPath, rmForce); err != nil {
 		return err
@@ -258,10 +273,12 @@ func runRm(_ *cobra.Command, args []string) error {
 }
 
 func previewRm(r rmResult, wipBranch, mainPath string, ahead int, aheadKnown bool, hasOrigin bool) error {
-	// Mirror actual rm logic: refuse when aheadKnown=false and not --force;
-	// otherwise wip-snapshot fires when uncommitted OR (known) ahead.
+	// Mirror actual rm pre-flight order exactly so dry-run always agrees with real rm.
 	hadWork := r.UncommittedFiles > 0 || ahead > 0 || !aheadKnown
+	ignoredN, _ := git.IgnoredCount(r.WorktreePath)
 	switch {
+	case ignoredN > 0 && !r.Force:
+		r.WouldRefuse = fmt.Sprintf("worktree has %d ignored file(s) that would be permanently deleted (exit %d). Move them out or use --force.", ignoredN, ExitIgnoredFiles)
 	case !aheadKnown && !r.Force:
 		r.WouldRefuse = fmt.Sprintf("could not determine ahead count (exit %d). Push origin/main first, or re-run with --force (keeps local branch).", ExitAheadUnknown)
 	case hadWork && !r.Force && !hasOrigin:

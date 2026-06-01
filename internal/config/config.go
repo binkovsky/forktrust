@@ -113,10 +113,18 @@ func (c *Config) AllProjects() []Project {
 	return nil
 }
 
-// Add appends a project, deduping by name.
+// Add appends a project, deduping by name AND by path.
+// Registering the same repo path under two names causes resolveWorktree to
+// match a worktree twice and fail with "multiple matches", so we reject
+// duplicate paths upfront with a clear message.
 func (c *Config) Add(p Project) error {
 	if c.FindByName(p.Name) != nil {
 		return fmt.Errorf("project %q already registered", p.Name)
+	}
+	for _, existing := range c.Projects {
+		if existing.Path == p.Path {
+			return fmt.Errorf("path %q is already registered as project %q", p.Path, existing.Name)
+		}
 	}
 	c.Projects = append(c.Projects, p)
 	return nil

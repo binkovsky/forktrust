@@ -39,12 +39,16 @@ Hard safety guarantees:
     overwriting work that is not yours.
 
 Exit codes:
-  0  success
-  2  merge conflict (refuse to auto-resolve)
-  3  main worktree is dirty
-  4  push to origin failed
-  6  no worktree matching slug
-  7  slug matches worktrees in multiple projects`,
+  0   success
+  2   merge conflict (refuse to auto-resolve)
+  3   main worktree is dirty
+  4   push to origin failed
+  6   no worktree matching slug
+  7   slug matches worktrees in multiple projects
+  10  main checkout is on the wrong branch
+  12  could not determine ahead count (no main reference resolved)
+  13  worktree removed but git branch -D failed (branch lingers)
+  14  worktree has ignored files that would be permanently deleted`,
 	Args: cobra.ExactArgs(1),
 	RunE: runFinish,
 }
@@ -122,15 +126,42 @@ func runFinish(_ *cobra.Command, args []string) error {
 		return coded(ExitAheadUnknown, fmt.Errorf("no main reference resolved (tried origin/%s, %s); push or create %s first", mainBranch, mainBranch, mainBranch))
 	}
 
-	// 2a. Guard against ignored files BEFORE any side effect (commit/merge/push).
-	// git worktree remove silently deletes ignored files; DirtyCount misses them.
-	// Refuse now so the user can move them out before the merge runs.
-	// ahead==0 path has its own check at line ~147 for the same reason.
+	// PRE-FLIGHT: all pure refusals before any side effect (commit/merge/push).
+	// Order matches the checks in previewFinish so dry-run always agrees.
+
+	// 2a. Ignored files would be silently lost.
 	if err := refuseIfIgnoredFiles(wtPath, slug); err != nil {
 		return err
 	}
 
-	// 2b. NOW it's safe to commit uncommitted WIP on the worktree branch.
+	// 2b. Main checkout must be on mainBranch (pure read, no side effect).
+	current, err := git.CurrentBranch(proj.Path)
+	if err != nil {
+		return err
+	}
+	if current != mainBranch {
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintf(os.Stderr, "REFUSE: main checkout at %s is on branch %q, expected %q.\n", proj.Path, current, mainBranch)
+		fmt.Fprintln(os.Stderr, "Merging now would land your work on the wrong branch and lie about success.")
+		fmt.Fprintf(os.Stderr, "Switch first:\n  git -C %s checkout %s\n", proj.Path, mainBranch)
+		fmt.Fprintln(os.Stderr, "Then re-run forktrust finish.")
+		return coded(ExitMainOnWrongBranch, fmt.Errorf("main checkout on %q, expected %q", current, mainBranch))
+	}
+
+	// 2c. Main checkout must be clean (pure read, no side effect).
+	mainDirty, err := git.DirtyCount(proj.Path)
+	if err != nil {
+		return err
+	}
+	if mainDirty > 0 {
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintf(os.Stderr, "REFUSE: main working tree in %s has %d uncommitted change(s).\n", proj.Path, mainDirty)
+		fmt.Fprintln(os.Stderr, "Cannot safely merge without risking overwrite. Commit/stash them first, then re-run.")
+		fmt.Fprintf(os.Stderr, "Inspect: git -C %s status --short\n", proj.Path)
+		return coded(ExitDirtyMain, fmt.Errorf("main worktree is dirty (%d files)", mainDirty))
+	}
+
+	// 2d. NOW it's safe to commit uncommitted WIP on the worktree branch.
 	if dirty > 0 {
 		msg := finishMessage
 		if msg == "" {
@@ -177,36 +208,9 @@ func runFinish(_ *cobra.Command, args []string) error {
 		return emitFinish(r)
 	}
 	notef("branch is %d commit(s) ahead of %s, merging", ahead, aheadRef)
+	// (wrong-branch and dirty-main checks already ran in pre-flight above)
 
-	// 3. Main checkout must be ON mainBranch — otherwise we'd merge into
-	// whatever HEAD happens to be (e.g. dev), pretending we shipped to main.
-	current, err := git.CurrentBranch(proj.Path)
-	if err != nil {
-		return err
-	}
-	if current != mainBranch {
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintf(os.Stderr, "REFUSE: main checkout at %s is on branch %q, expected %q.\n", proj.Path, current, mainBranch)
-		fmt.Fprintln(os.Stderr, "Merging now would land your work on the wrong branch and lie about success.")
-		fmt.Fprintf(os.Stderr, "Switch first:\n  git -C %s checkout %s\n", proj.Path, mainBranch)
-		fmt.Fprintln(os.Stderr, "Then re-run forktrust finish.")
-		return coded(ExitMainOnWrongBranch, fmt.Errorf("main checkout on %q, expected %q", current, mainBranch))
-	}
-
-	// 4. Main checkout must be clean to safely merge into it.
-	mainDirty, err := git.DirtyCount(proj.Path)
-	if err != nil {
-		return err
-	}
-	if mainDirty > 0 {
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintf(os.Stderr, "REFUSE: main working tree in %s has %d uncommitted change(s).\n", proj.Path, mainDirty)
-		fmt.Fprintln(os.Stderr, "Cannot safely merge without risking overwrite. Commit/stash them first, then re-run.")
-		fmt.Fprintf(os.Stderr, "Inspect: git -C %s status --short\n", proj.Path)
-		return coded(ExitDirtyMain, fmt.Errorf("main worktree is dirty (%d files)", mainDirty))
-	}
-
-	// 5. Fast-forward main to origin/main (only if we have origin).
+	// 3. Fast-forward main to origin/main (only if we have origin).
 	if hasOrigin {
 		if err := gitStream(finishJSON, proj.Path, "pull", "--ff-only", "origin", mainBranch); err != nil {
 			return coded(ExitPushFailed, fmt.Errorf("pull --ff-only failed: %w", err))
@@ -299,17 +303,19 @@ func previewFinish(r finishResult, mainBranch, mainPath string) error {
 
 	// Mirror the early ignored-files guard from runFinish (step 2a).
 	// previewFinish must surface every refusal that runFinish would hit.
-	ignoredN, _ := git.IgnoredCount(r.WorktreePath, []string{".env.local"})
+	ignoredN, _ := git.IgnoredCount(r.WorktreePath)
 
+	// Mirror runFinish pre-flight order exactly: ignored → wrong-branch → dirty-main → unknown-ref.
+	// Any reordering here creates dry-run divergence.
 	switch {
+	case ignoredN > 0:
+		r.WouldRefuse = fmt.Sprintf("worktree has %d ignored file(s) that would be permanently deleted (exit %d). Move them out or use `forktrust rm --force`.", ignoredN, ExitIgnoredFiles)
 	case !aheadKnown:
 		r.WouldRefuse = fmt.Sprintf("no main reference resolved (exit %d). Push origin/%s or create local %s first.", ExitAheadUnknown, mainBranch, mainBranch)
 	case current != mainBranch:
 		r.WouldRefuse = fmt.Sprintf("main checkout on %q, expected %q (exit %d)", current, mainBranch, ExitMainOnWrongBranch)
 	case mainDirty > 0:
 		r.WouldRefuse = fmt.Sprintf("main checkout is dirty (%d uncommitted file(s)) (exit %d)", mainDirty, ExitDirtyMain)
-	case ignoredN > 0:
-		r.WouldRefuse = fmt.Sprintf("worktree has %d ignored file(s) that would be permanently deleted (exit %d). Move them out or use `forktrust rm --force`.", ignoredN, ExitIgnoredFiles)
 	}
 
 	if finishJSON {
@@ -422,7 +428,7 @@ func resolveWorktree(cfg *config.Config, projectName, slug string) (*config.Proj
 // any removeWorktree invocation because git worktree remove silently deletes
 // ignored files without listing them — git status --porcelain does not show them.
 func refuseIfIgnoredFiles(wtPath, slug string) error {
-	ignoredN, _ := git.IgnoredCount(wtPath, []string{".env.local"})
+	ignoredN, _ := git.IgnoredCount(wtPath)
 	if ignoredN == 0 {
 		return nil
 	}

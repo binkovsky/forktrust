@@ -153,7 +153,27 @@ func renderStatus() error {
 			isMain := samePath(wt.Path, proj.Path)
 			slug := ""
 			if !isMain {
-				slug = filepath.Base(wt.Path)
+				// Use path relative to .forktrust/worktrees/ so slugs with
+				// slashes (e.g. feature/foo) are preserved correctly.
+				// filepath.Base was wrong: it returned only "foo" for a worktree
+				// at .forktrust/worktrees/feature/foo, breaking port lookup and
+				// status display for slash-containing slugs.
+				// EvalSymlinks on both paths avoids the /var vs /private/var
+				// divergence on macOS that would produce a long ../../.. result.
+				wtRootRaw := filepath.Join(proj.Path, ".forktrust", "worktrees")
+				wtRoot, _ := filepath.EvalSymlinks(wtRootRaw)
+				if wtRoot == "" {
+					wtRoot = wtRootRaw
+				}
+				wtPathReal, _ := filepath.EvalSymlinks(wt.Path)
+				if wtPathReal == "" {
+					wtPathReal = wt.Path
+				}
+				if rel, err := filepath.Rel(wtRoot, wtPathReal); err == nil && !strings.HasPrefix(rel, "..") {
+					slug = rel
+				} else {
+					slug = filepath.Base(wt.Path) // fallback for unexpected layouts
+				}
 			}
 			dirty, _ := git.DirtyCount(wt.Path)
 			ahead := 0

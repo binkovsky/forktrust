@@ -73,40 +73,50 @@ func DirtyCount(wt string) (int, error) {
 	return strings.Count(out, "\n") + 1, nil
 }
 
-// IgnoredCount returns the number of ignored files in the given worktree,
-// excluding any paths in the allowlist (relative to wt). The allowlist is
-// used to skip forktrust-managed files such as .env.local that are
-// intentionally ignored and safe to remove alongside the worktree.
+// IgnoredCount returns the number of ignored files in the given worktree that
+// would be silently deleted by `git worktree remove`. It skips files that are
+// provably forktrust-managed (i.e. start with the forktrust marker line), so
+// a user-authored .env.local that is also .gitignore'd is correctly counted.
 //
-// Uses `git ls-files --others --ignored --exclude-standard` which lists
-// tracked-gitignore and .gitignore-matched files only — not committed files.
-// Returns (0, nil) when the git command is unavailable or produces an error
-// (graceful degradation: we do not block rm on a count we can't compute).
-func IgnoredCount(wt string, allowlist []string) (int, error) {
+// Uses `git ls-files --others --ignored --exclude-standard`. Returns (0, nil)
+// on git errors for graceful degradation.
+func IgnoredCount(wt string) (int, error) {
 	out, err := Run(wt, "ls-files", "--others", "--ignored", "--exclude-standard")
 	if err != nil {
-		// Not all git versions / bare configs support this; degrade gracefully
-		// rather than blocking the user. The calling site logs a warning.
 		return 0, nil
 	}
 	if out == "" {
 		return 0, nil
-	}
-	allow := make(map[string]struct{}, len(allowlist))
-	for _, a := range allowlist {
-		allow[a] = struct{}{}
 	}
 	count := 0
 	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
 		if line == "" {
 			continue
 		}
-		if _, skip := allow[line]; skip {
+		// Skip files that forktrust itself manages and always regenerates.
+		// Check the actual marker rather than the filename, so a user-authored
+		// .env.local (without the marker) is counted and not silently dropped.
+		if isForktrustManaged(filepath.Join(wt, line)) {
 			continue
 		}
 		count++
 	}
 	return count, nil
+}
+
+// isForktrustManaged reports whether the file at path was written by forktrust
+// (i.e. starts with the "# Managed by forktrust" marker line). These files are
+// safe to delete on worktree removal — forktrust regenerates them on `new`.
+func isForktrustManaged(path string) bool {
+	const marker = "# Managed by forktrust"
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	buf := make([]byte, len(marker))
+	n, _ := f.Read(buf)
+	return string(buf[:n]) == marker
 }
 
 // AddWorktreeNewBranchFrom creates a new worktree at path on a new branch

@@ -20,7 +20,7 @@ Each chat = one worktree at .forktrust/worktrees/<slug> on branch fork/<slug>.
 Finish a chat with "forktrust finish <slug>" — it commits WIP, merges to main,
 pushes, and removes the worktree. Refuses on merge conflicts (owner resolves
 manually). Abandon a chat with "forktrust rm <slug>" — it snapshots WIP as
-wip/<branch>-YYYYMMDD before removing, so work is never lost.`,
+wip/<branch>-YYYYMMDD-HHMMSS-<sha7> before removing, so work is never lost.`,
 	SilenceUsage: true,
 	// Errors are printed once by main.go (with "error:" prefix); silence
 	// cobra's own print to avoid the duplicate "Error: ... error: ..." pair.
