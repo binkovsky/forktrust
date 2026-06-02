@@ -1,99 +1,83 @@
-## Using forktrust for parallel tasks
+# forktrust — AGENTS.md
 
-This project uses [forktrust](https://github.com/binkovsky/forktrust) to isolate
-parallel AI coding sessions in their own git worktrees. Each task gets its own
-copy of the codebase so concurrent agents do not step on each other.
+[forktrust](https://github.com/binkovsky/forktrust) isolates parallel AI coding sessions in their own git worktrees so multiple agents do not step on each other, with a refuse-on-conflict merge gate and a never-lose-WIP guarantee.
 
-### Workflow (do this for every new task)
+This file is the hub for AI agents. The detailed reference lives in `docs/`.
 
-1. Create an isolated worktree for the task:
-   ```bash
-   forktrust new <task-slug>          # creates .forktrust/worktrees/<task-slug>
-   ```
+## Read first
 
-2. cd into the worktree. Either use the path printed in step 1, or use the
-   `ft` shell function (see "Shell integration" below):
-   ```bash
-   ft <task-slug>                     # cd into the worktree
-   forktrust shell <task-slug>        # or: open an interactive shell there
-   ```
-   Do NOT edit files in the main checkout.
+1. **[docs/ai-integration.md](./docs/ai-integration.md)** — what an agent must/must-not do, decision template, examples for Claude Code / Cursor / Aider.
+2. **[docs/exit-codes.md](./docs/exit-codes.md)** — exit codes 0-14 with cause + remedy + agent action.
+3. **[docs/safety-model.md](./docs/safety-model.md)** — pre-flight refusal, dry-run parity, never-lose-WIP, refuse-on-conflict, refuse-on-ignored-loss, `.env.local` ownership, trust gate, path safety.
 
-3. When the task is done, ship the change:
-   ```bash
-   forktrust finish <task-slug>       # commit WIP + merge to main + push + cleanup
-   ```
-
-4. If you want to throw the work away (without merging), use:
-   ```bash
-   forktrust rm <task-slug>           # snapshots WIP to wip/<branch>-YYYYMMDD-HHMMSS-<sha7> on origin first
-   ```
-
-### Hard safety guarantees you can rely on
-
-- **Pre-flight refusal:** `finish` and `rm` perform ALL refusal checks BEFORE
-  any git mutation. If the command exits non-zero, no commit, merge, push, or
-  branch deletion happened. Side effects are never partial.
-- **Dry-run matches reality:** `finish --dry-run` and `rm --dry-run` predict
-  the exact exit code the real command would return. Use `--json` and read
-  `would_refuse` to decide before executing.
-- `finish` REFUSES on merge conflict (exit 2). No auto-resolve, ever.
-- `finish` REFUSES if main checkout is dirty (exit 3) or on wrong branch (exit 10).
-- `rm` and `finish` REFUSE if the worktree has ignored files (exit 14) —
-  `git worktree remove` deletes them silently. Move them out or use `--force`.
-- `rm` ALWAYS pushes uncommitted WIP to `wip/<branch>-YYYYMMDD-HHMMSS-<sha7>` on
-  origin before removing. Work is never lost without `--force`.
-  The `<sha7>` suffix is the short SHA of the WIP commit; it makes wip/*
-  names unique even when `rm` is run on different branches in the same second.
-
-### Machine-readable output
-
-The state-modifying commands (`new`, `list`, `status`, `finish`, `rm`) and
-`doctor` support `--json` for parseable output:
+## Quick start (4 commands)
 
 ```bash
-forktrust list --json
-forktrust status --json
-forktrust new my-task --json
-forktrust finish my-task --json
-forktrust finish my-task --dry-run --json   # preview, no execution
-forktrust doctor --json                     # health report
+forktrust new <slug>                            # create isolated worktree
+ft <slug>                                       # cd into it (shell function — see docs/shell-integration.md)
+# ... edit, run tests ...
+forktrust finish <slug> --dry-run --json        # preview — read would_refuse
+forktrust finish <slug>                         # ship (commit + merge + push + cleanup)
 ```
 
-Exit codes are stable across releases. Switch on them, not on stderr text:
+To abandon (snapshots WIP to `wip/<branch>-YYYYMMDD-HHMMSS-<sha7>` first):
 
-| Code | Meaning | What an agent should do |
+```bash
+forktrust rm <slug>
+```
+
+## Five hard guarantees you can rely on
+
+1. **Pre-flight refusal.** `finish`/`rm` make all refusal checks BEFORE any git mutation. Non-zero exit ⇒ no commit, merge, push, or branch delete happened.
+2. **Dry-run parity.** `<cmd> --dry-run --json`'s `would_refuse` and exit code exactly match the real command.
+3. **Never-lose-WIP.** `rm` pushes uncommitted/unpushed work to `wip/<branch>-YYYYMMDD-HHMMSS-<sha7>` on origin before touching local state. Only `--force` skips it.
+4. **Refuse-on-conflict.** `finish` aborts the merge on any conflict (exit 2). No `--strategy ours/theirs`, ever.
+5. **Refuse-on-ignored-loss.** `rm`/`finish` exit 14 if the worktree has ignored files that `git worktree remove` would silently delete. `--force` skips (rm only).
+
+Full details: [docs/safety-model.md](./docs/safety-model.md).
+
+## Exit codes (most important)
+
+| Code | Meaning | Agent action |
 |---|---|---|
-| 0  | success | proceed |
-| 2  | merge conflict (refuse to auto-resolve) | surface to user, ask before doing anything |
-| 3  | main worktree is dirty | tell user to commit/stash main, then retry |
-| 4  | push to origin failed | check auth/network, retry |
-| 5  | wip/* snapshot push failed (worktree NOT removed) | check origin auth; retry `rm` |
-| 6  | no worktree matching slug | check slug; list with `forktrust list` |
-| 7  | slug matches multiple projects | pass `--project <name>` |
-| 8  | hook failed (or untrusted command hook) | inspect `.forktrustconfig`; run `forktrust trust` if hooks are safe |
-| 9  | no origin remote configured | add a remote or run with `--force` |
-| 10 | main checkout is on the wrong branch | tell user to `git checkout <main>` |
-| 11 | cwd is in an unregistered git repo | run `forktrust config add .` |
-| 12 | could not determine ahead count (no main reference resolved) | push origin/main, or re-run `rm --force` |
-| 13 | rm/finish: worktree removed but `git branch -D` failed (branch lingers) | tell user the branch is still around |
-| 14 | worktree has ignored files that would be lost | tell user to move them out, or pass `--force` |
+| 0 | success | proceed |
+| 2 | merge conflict | STOP — ask user |
+| 3 | main is dirty | tell user to stash/commit |
+| 6 | no such slug | `forktrust list`; check spelling |
+| 7 | ambiguous slug | re-run with `--project` |
+| 10 | main on wrong branch | tell user to `git checkout` |
+| 12 | no main ref resolved | ask user; never `--force` |
+| 14 | ignored files | list them; ask user; never `--force` |
 
-### Inspecting state
+Full table in [docs/exit-codes.md](./docs/exit-codes.md).
+
+## JSON output
+
+Every state-modifying command supports `--json`:
 
 ```bash
-forktrust list --json               # all worktrees across all registered repos
-forktrust status --json             # per-worktree dirty/ahead/behind/ports
-forktrust finish <slug> --dry-run   # show the plan without executing
-forktrust rm <slug> --dry-run       # show the abandon plan without executing
-forktrust doctor                    # health check: origin, main, hooks, ports
+forktrust new my-task --json
+forktrust status --json
+forktrust finish my-task --dry-run --json   # consult would_refuse
+forktrust rm my-task --dry-run --json
 ```
 
-### Shell integration
+Schemas: [docs/json-schema.md](./docs/json-schema.md). Stable across releases.
 
-Add to ~/.zshrc or ~/.bashrc for `cd` ergonomics:
+## Five rules for agents
+
+1. Every task starts with `forktrust new <slug>`.
+2. All edits happen inside `forktrust cd <slug>`'s path (or after `forktrust shell <slug>`).
+3. Branch decisions on exit codes, not stderr text.
+4. Read `--dry-run --json` before any mutation if you're not certain.
+5. `--force`, `forktrust trust`, `forktrust config add`, and `git checkout` on main need explicit user consent.
+
+Anything else is an agent bug, not a forktrust bug.
+
+## Shell integration
 
 ```bash
+# Add to ~/.zshrc or ~/.bashrc
 ft() {
   local p
   p="$(forktrust cd "$1" 2>/dev/null)" || { echo "forktrust: no worktree '$1'" >&2; return 1; }
@@ -101,30 +85,27 @@ ft() {
 }
 ```
 
-Then `ft my-task` cd's into the worktree. Or use `forktrust shell <slug>` to
-spawn a subshell inside the worktree (with `FORKTRUST_SLUG` exported).
+Then `ft <slug>` cd's into any worktree. See [docs/shell-integration.md](./docs/shell-integration.md) for tab completion, fzf picker, prompts.
 
-### When NOT to use forktrust
+## Reference index
 
-- For tiny, read-only investigations (just grep, no edits).
-- When the user explicitly asks you to edit in main with the override
-  `edit in main, no worktree`.
-
-### Quick reference
-
-| Command | Effect |
+| Topic | Doc |
 |---|---|
-| `forktrust new <slug>` | Create isolated worktree on branch `fork/<slug>` |
-| `forktrust list` | List all worktrees (use `--json`) |
-| `forktrust status` | Per-worktree dirty/ahead/ports (use `--watch` for live) |
-| `forktrust cd <slug>` | Print absolute worktree path (for shell `cd`) |
-| `forktrust shell <slug>` | Open interactive shell in the worktree |
-| `forktrust exec <slug> -- <cmd>` | Run a command in the worktree directory |
-| `forktrust finish <slug>` | Merge to main, push, cleanup (refuses on conflict) |
-| `forktrust rm <slug>` | Abandon, pushing WIP to `wip/*` first |
-| `forktrust ai <slug>` | Launch configured AI tool in the worktree |
-| `forktrust trust` | Approve this repo's `.forktrustconfig` command hooks |
-| `forktrust doctor` | Health check (origin, main ref, hooks, ports) |
+| Getting started | [docs/getting-started.md](./docs/getting-started.md) |
+| Every command + flag | [docs/commands.md](./docs/commands.md) |
+| `.forktrustconfig` | [docs/config.md](./docs/config.md) |
+| Exit codes | [docs/exit-codes.md](./docs/exit-codes.md) |
+| JSON schemas | [docs/json-schema.md](./docs/json-schema.md) |
+| Safety model | [docs/safety-model.md](./docs/safety-model.md) |
+| Common workflows | [docs/workflows.md](./docs/workflows.md) |
+| Troubleshooting | [docs/troubleshooting.md](./docs/troubleshooting.md) |
+| AI integration recipes | [docs/ai-integration.md](./docs/ai-integration.md) |
+| Shell integration | [docs/shell-integration.md](./docs/shell-integration.md) |
 
-Install with `brew install binkovsky/forktrust/forktrust` or download from
-https://github.com/binkovsky/forktrust/releases.
+Install:
+
+```bash
+brew install binkovsky/forktrust/forktrust
+```
+
+or download from https://github.com/binkovsky/forktrust/releases.

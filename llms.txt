@@ -1,76 +1,54 @@
 # forktrust
 
-> Safe-by-default git worktree manager for parallel AI coding agents. Refuse-on-conflict merges. Never-lose-WIP guarantee. Per-worktree port allocation. One command (`forktrust agent-docs`) to teach any AI how to use it.
+> Safe-by-default git worktree manager for parallel AI coding agents. Refuse-on-conflict merges. Never-lose-WIP guarantee. Pre-flight refusal (no partial-state failures). Per-worktree port allocation. One command (`forktrust agent-docs`) to teach any AI how to use it.
 
 Install: `brew install binkovsky/forktrust/forktrust`
 
-## Core docs
+## Documentation tree
 
-- [README](https://github.com/binkovsky/forktrust/blob/main/README.md): full feature list, install, comparison table vs gtr/gwq/wtp/workz/claude-squad
-- [AGENTS.md](https://github.com/binkovsky/forktrust/blob/main/AGENTS.md): how AI coding agents (Claude Code, Cursor, Aider, Codex) should use the tool
+The canonical reference lives in `docs/`. Each file is a complete chapter; together they cover every flag, every behavior, every exit code, every JSON field.
+
+- [docs/README.md](https://github.com/binkovsky/forktrust/blob/main/docs/README.md): index and glossary
+- [docs/getting-started.md](https://github.com/binkovsky/forktrust/blob/main/docs/getting-started.md): install → register → first worktree → first finish
+- [docs/commands.md](https://github.com/binkovsky/forktrust/blob/main/docs/commands.md): every command, every flag, every behavior with examples
+- [docs/config.md](https://github.com/binkovsky/forktrust/blob/main/docs/config.md): `.forktrustconfig` reference — `[ports]`, `[[hooks.post_create]]`, trust gate
+- [docs/exit-codes.md](https://github.com/binkovsky/forktrust/blob/main/docs/exit-codes.md): all 14 exit codes with cause, remedy, and agent action
+- [docs/json-schema.md](https://github.com/binkovsky/forktrust/blob/main/docs/json-schema.md): every JSON output schema with field types and stability rules
+- [docs/safety-model.md](https://github.com/binkovsky/forktrust/blob/main/docs/safety-model.md): pre-flight refusal, dry-run parity, never-lose-WIP, refuse-on-conflict, refuse-on-ignored-loss, `.env.local` ownership, trust gate, path safety
+- [docs/workflows.md](https://github.com/binkovsky/forktrust/blob/main/docs/workflows.md): canonical patterns — parallel tasks, dirty main, abandon-and-restore, multi-repo, CI
+- [docs/troubleshooting.md](https://github.com/binkovsky/forktrust/blob/main/docs/troubleshooting.md): every error message and exit code mapped to a fix
+- [docs/ai-integration.md](https://github.com/binkovsky/forktrust/blob/main/docs/ai-integration.md): Claude Code, Cursor, Aider, Codex recipes; future MCP server design
+- [docs/shell-integration.md](https://github.com/binkovsky/forktrust/blob/main/docs/shell-integration.md): `ft()` function, tab completion, fzf picker, prompts
+
+## Top-level
+
+- [README](https://github.com/binkovsky/forktrust/blob/main/README.md): hero, install, comparison table vs gtr/gwq/wtp/workz/claude-squad/conductor, roadmap
+- [AGENTS.md](https://github.com/binkovsky/forktrust/blob/main/AGENTS.md): AI-agent hub (concise pointers into docs/)
 - [LICENSE](https://github.com/binkovsky/forktrust/blob/main/LICENSE): MIT
 
 ## Workflow
 
-The canonical loop, in three commands:
-
 ```bash
-forktrust new <slug>      # create isolated worktree at .forktrust/worktrees/<slug>
-ft <slug>                 # cd into the worktree (see "Shell integration" below)
-# ... edit files there (NOT in main checkout) ...
-forktrust finish <slug>   # commit WIP + merge to main + push + cleanup
+forktrust new <slug>                       # create isolated worktree
+ft <slug>                                  # cd in via the shell function
+# ... edit files (NOT in main checkout) ...
+forktrust finish <slug>                    # commit + merge + push + cleanup
 ```
 
-To abandon without merging (WIP is snapshotted to `wip/<branch>-YYYYMMDD-HHMMSS-<sha7>` on origin first):
-
+Abandon (snapshots WIP first):
 ```bash
-forktrust rm <slug>
+forktrust rm <slug>                        # → wip/<branch>-YYYYMMDD-HHMMSS-<sha7>
 ```
 
-## Hard guarantees
+## Five hard guarantees
 
-- **Pre-flight refusal:** `finish` and `rm` run ALL refusal checks BEFORE any git mutation. Non-zero exit ⇒ no commit, merge, push, or branch delete happened. Side effects are never partial.
-- **Dry-run matches reality:** `--dry-run --json` predicts the exact `would_refuse` and exit code of the real command.
-- **Never-lose-WIP:** `rm` always pushes uncommitted/unpushed work to `wip/<branch>-YYYYMMDD-HHMMSS-<sha7>` on origin before touching the local state. `<sha7>` is the WIP commit's short SHA, so same-second `rm` on different branches never collides.
-- **Refuse-on-conflict:** `finish` aborts the merge on any conflict (exit 2). No `--strategy ours/theirs`, ever.
-- **Refuse-on-ignored:** `rm`/`finish` refuse (exit 14) if the worktree has ignored files that `git worktree remove` would silently delete. `--force` skips.
-- **.env.local ownership:** only treated as forktrust-managed if (a) regular file (not symlink) at the worktree root and (b) starts with the exact `# Managed by forktrust...` header line. User .env.local with any other content is preserved.
+1. **Pre-flight refusal** — non-zero exit ⇒ no git mutation happened.
+2. **Dry-run parity** — `--dry-run --json`'s `would_refuse` exactly matches real-command behavior.
+3. **Never-lose-WIP** — `rm` pushes to `wip/<branch>-YYYYMMDD-HHMMSS-<sha7>` before removing.
+4. **Refuse-on-conflict** — `finish` aborts merge on conflict (exit 2). Never `--strategy`.
+5. **Refuse-on-ignored-loss** — exit 14 if `git worktree remove` would silently delete ignored files.
 
-## Shell integration
-
-```bash
-# ~/.zshrc or ~/.bashrc
-ft() {
-  local p
-  p="$(forktrust cd "$1" 2>/dev/null)" || { echo "forktrust: no worktree '$1'" >&2; return 1; }
-  cd "$p" || return 1
-}
-```
-
-Or: `forktrust shell <slug>` opens an interactive shell in the worktree (with `FORKTRUST_SLUG` exported).
-
-## .forktrustconfig (per-repo, committed)
-
-```toml
-[ports]
-range = "3000-3099"
-size  = 10
-vars  = ["PORT", "NEXT_PUBLIC_PORT"]
-
-[[hooks.post_create]]
-type = "copy"
-from = ".env"
-to   = ".env"
-
-[[hooks.post_create]]
-type = "symlink"
-from = "node_modules"
-to   = "node_modules"
-
-[[hooks.post_create]]
-type = "command"
-run  = "pnpm install"   # requires `forktrust trust`
-```
+`.env.local` is treated as forktrust-managed only if (a) regular file at worktree root, (b) starts with the exact `# Managed by forktrust...` header.
 
 ## Stable exit codes (will not change across releases)
 
@@ -88,8 +66,23 @@ run  = "pnpm install"   # requires `forktrust trust`
 | 10 | main checkout on wrong branch |
 | 11 | cwd is in unregistered git repo |
 | 12 | rm/finish could not determine ahead count |
-| 13 | rm: worktree removed but branch -D failed |
+| 13 | rm/finish: worktree removed but branch -D failed |
 | 14 | rm/finish refused: ignored files in worktree would be permanently deleted |
+
+Full action table: [docs/exit-codes.md](https://github.com/binkovsky/forktrust/blob/main/docs/exit-codes.md).
+
+## Shell integration
+
+```bash
+# ~/.zshrc or ~/.bashrc
+ft() {
+  local p
+  p="$(forktrust cd "$1" 2>/dev/null)" || { echo "forktrust: no worktree '$1'" >&2; return 1; }
+  cd "$p" || return 1
+}
+```
+
+Or `forktrust shell <slug>` for a subshell with `FORKTRUST_SLUG` exported. Full guide: [docs/shell-integration.md](https://github.com/binkovsky/forktrust/blob/main/docs/shell-integration.md).
 
 ## Releases
 

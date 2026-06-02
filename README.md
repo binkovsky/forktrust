@@ -13,6 +13,23 @@ forktrust ai my-task            # launches your configured AI in it
 forktrust finish my-task        # merge to main + push + cleanup (refuses on conflict)
 ```
 
+## Documentation
+
+Full reference lives in [**docs/**](./docs/). Key entry points:
+
+- [Getting started](./docs/getting-started.md) — install, register, first worktree (5 min)
+- [Commands reference](./docs/commands.md) — every command, every flag
+- [`.forktrustconfig`](./docs/config.md) — hooks, ports, trust gate
+- [Exit codes](./docs/exit-codes.md) — all 14 with cause / remedy / agent action
+- [JSON schemas](./docs/json-schema.md) — stable contract for programmatic use
+- [Safety model](./docs/safety-model.md) — every guarantee in depth
+- [Workflows](./docs/workflows.md) — parallel agents, dirty main, abandon-and-restore
+- [Troubleshooting](./docs/troubleshooting.md) — every error mapped to a fix
+- [AI integration](./docs/ai-integration.md) — Claude Code / Cursor / Aider recipes
+- [Shell integration](./docs/shell-integration.md) — `ft` function, completion, fzf
+
+AI agents: read **[AGENTS.md](./AGENTS.md)** first, then `docs/ai-integration.md` + `docs/exit-codes.md` + `docs/safety-model.md`.
+
 ## Why
 
 Parallel AI coding sessions break in predictable ways. `forktrust` is opinionated about the parts where being wrong loses work:
