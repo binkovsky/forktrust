@@ -16,6 +16,7 @@ The canonical loop, in three commands:
 
 ```bash
 forktrust new <slug>      # create isolated worktree at .forktrust/worktrees/<slug>
+ft <slug>                 # cd into the worktree (see "Shell integration" below)
 # ... edit files there (NOT in main checkout) ...
 forktrust finish <slug>   # commit WIP + merge to main + push + cleanup
 ```
@@ -25,6 +26,28 @@ To abandon without merging (WIP is snapshotted to `wip/<branch>-YYYYMMDD-HHMMSS-
 ```bash
 forktrust rm <slug>
 ```
+
+## Hard guarantees
+
+- **Pre-flight refusal:** `finish` and `rm` run ALL refusal checks BEFORE any git mutation. Non-zero exit ⇒ no commit, merge, push, or branch delete happened. Side effects are never partial.
+- **Dry-run matches reality:** `--dry-run --json` predicts the exact `would_refuse` and exit code of the real command.
+- **Never-lose-WIP:** `rm` always pushes uncommitted/unpushed work to `wip/<branch>-YYYYMMDD-HHMMSS-<sha7>` on origin before touching the local state. `<sha7>` is the WIP commit's short SHA, so same-second `rm` on different branches never collides.
+- **Refuse-on-conflict:** `finish` aborts the merge on any conflict (exit 2). No `--strategy ours/theirs`, ever.
+- **Refuse-on-ignored:** `rm`/`finish` refuse (exit 14) if the worktree has ignored files that `git worktree remove` would silently delete. `--force` skips.
+- **.env.local ownership:** only treated as forktrust-managed if (a) regular file (not symlink) at the worktree root and (b) starts with the exact `# Managed by forktrust...` header line. User .env.local with any other content is preserved.
+
+## Shell integration
+
+```bash
+# ~/.zshrc or ~/.bashrc
+ft() {
+  local p
+  p="$(forktrust cd "$1" 2>/dev/null)" || { echo "forktrust: no worktree '$1'" >&2; return 1; }
+  cd "$p" || return 1
+}
+```
+
+Or: `forktrust shell <slug>` opens an interactive shell in the worktree (with `FORKTRUST_SLUG` exported).
 
 ## .forktrustconfig (per-repo, committed)
 

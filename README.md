@@ -25,6 +25,9 @@ Parallel AI coding sessions break in predictable ways. `forktrust` is opinionate
 | Three `pnpm install` runs collide on `pnpm-lock.yaml` | Symlink hook shares `node_modules` from main; install runs once |
 | Three dev servers fight over port 3000 | Per-worktree aligned port block (3000-3009, 3010-3019, ...) auto-written to `.env.local` |
 | Agent edits files in the main checkout by accident | `.forktrust/` auto-added to `.git/info/exclude` (never committed) |
+| Command fails halfway and leaves a phantom WIP commit | **Pre-flight refusal**: all checks run BEFORE any git mutation. Non-zero exit = no side effects. |
+| Dry-run says "OK" but the real command then refuses | **Dry-run matches reality**: `--dry-run --json` predicts the exact exit code the real command would return |
+| Worktree has `.env` or `secret.log` and `rm` silently deletes them | `rm`/`finish` REFUSE (exit 14) on ignored files; `--force` skips the guard |
 
 ## AI-agent integration in one command
 
@@ -117,14 +120,33 @@ Any future edit to `.forktrustconfig` auto-revokes trust until you re-run `forkt
 |---|---|
 | `forktrust new <slug>` | Create worktree at `.forktrust/worktrees/<slug>` on branch `fork/<slug>` |
 | `forktrust list` | All worktrees across all registered repos (use `--json`) |
+| `forktrust status` | Per-worktree dirty/ahead/behind/ports (use `--watch`, `--json`) |
+| `forktrust cd <slug>` | Print absolute worktree path (for shell `cd` integration) |
+| `forktrust shell <slug>` | Open interactive shell in the worktree |
+| `forktrust exec <slug> -- <cmd>` | Run any command in the worktree directory |
 | `forktrust finish <slug>` | Commit WIP, merge `--no-ff` to main, push, cleanup. Refuses on conflict |
 | `forktrust rm <slug>` | Abandon, snapshotting WIP to `wip/<branch>-YYYYMMDD-HHMMSS-<sha7>` first |
 | `forktrust ai <slug>` | Launch configured AI tool in the worktree |
+| `forktrust doctor` | Health check (origin, main ref, hooks, ports, brew version) |
 | `forktrust trust [path]` | Approve `.forktrustconfig` command hooks for this repo |
 | `forktrust config add <path>` | Register a repo with forktrust |
 | `forktrust agent-docs` | Print AGENTS.md snippet to teach an AI agent how to use this |
 
-The mutating + listing commands (`new`, `list`, `status`, `finish`, `rm`) support `--json` for machine-readable output. `finish` and `rm` also accept `--dry-run` to preview without executing. `config`, `trust`, `exec`, `ai`, `agent-docs` are human-text-only.
+The mutating + listing commands (`new`, `list`, `status`, `finish`, `rm`, `doctor`) support `--json` for machine-readable output. `finish` and `rm` also accept `--dry-run` to preview without executing. `cd`, `shell`, `config`, `trust`, `exec`, `ai`, `agent-docs` are human-text-only.
+
+### Shell integration (`ft` function)
+
+Add to `~/.zshrc` or `~/.bashrc` so `ft <slug>` cd's into any worktree:
+
+```bash
+ft() {
+  local p
+  p="$(forktrust cd "$1" 2>/dev/null)" || { echo "forktrust: no worktree '$1'" >&2; return 1; }
+  cd "$p" || return 1
+}
+```
+
+Alternatively `forktrust shell <slug>` opens a subshell directly in the worktree (with `FORKTRUST_SLUG` exported so prompts can show which worktree is active).
 
 ## Stable exit codes
 
@@ -170,6 +192,8 @@ Verified May 2026 against primary repo sources. Stars are GitHub API counts.
 Hard differentiators (no verified competitor offers these):
 - `finish`-style safe merge orchestration with refuse-on-conflict and refuse-on-dirty-main
 - `wip/*` snapshot push on abandon (never-lose-WIP guarantee)
+- Pre-flight refusal (all checks before any mutation) + dry-run guaranteed to match real behavior
+- Ignored-file guard prevents silent `git worktree remove` data loss
 - Cross-repo worktree listing
 - `agent-docs` command for one-step AI integration
 - Auto-release of ports on finish/rm (workz allocates but doesn't release)
@@ -177,11 +201,20 @@ Hard differentiators (no verified competitor offers these):
 ## Roadmap
 
 Shipped in v0.5+: `exec`, `status --watch`, cross-worktree edit prediction, AI adapter, `agent-docs`.
+Shipped in v0.7.1: `cd`, `shell`, `doctor`, pre-flight refusal model, dry-run parity guarantee.
 
-Open:
+Next versions — positioning forktrust as the "merge gate for AI agents":
 
-- MCP server (`forktrust mcp`) so AI agents can call worktree ops as native tools
-- Claude Code plugin (slash commands + skill + hook) in a sister repo
+- **v0.7.2 Verify gate**: `[verify]` section in `.forktrustconfig`; `finish` refuses without green tests
+- **v0.7.3 Change contract**: `forktrust new <slug> --scope "auth/**"` — refuse out-of-scope edits at `finish`
+- **v0.7.4 PR mode**: `forktrust pr <slug>` creates a GitHub PR instead of direct merge
+- **v0.7.5 MCP server**: `forktrust mcp` — native typed tools for Claude Code / Cursor
+- **v0.7.6 Summary validation**: agent must produce a summary; cross-checked against diff
+- **v0.7.7 Templates + policy packs**: `forktrust new --template nextjs`, `forktrust policy init strict-ai`
+- **v0.8.0 Intelligence**: `forktrust plan-merge` (risk scoring), audit ledger, `rollback-info`
+- **v0.8.1 Secrets guard**: pre-finish diff scan for keys / tokens / .env
+- **v0.9.0 Runtime layer**: `forktrust up/down/logs/web <slug>` (process management)
+- **v1.0.0 TUI dashboard**: minimal `forktrust tui` (sessions, diff preview, approve/reject)
 - `--no-hooks` ergonomics (per-hook opt-in/out instead of all-or-nothing)
 - Windows flock fallback (currently no-op, accepts allocation race)
 
