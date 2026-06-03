@@ -25,6 +25,8 @@ For the full catalog see [exit-codes.md](./exit-codes.md). Quick fixes:
 | 14 | Move ignored files out, or `--force` (rm only) |
 | 15 | Fix the failing verify command, or `--no-verify` on `finish` (with explicit consent) |
 | 16 | Revert out-of-scope edits, widen scope (`forktrust scope <slug> --set "..."`), or `--no-scope` (with explicit consent) |
+| 17 | Install gh (`brew install gh`) or authenticate (`gh auth login`) |
+| 18 | Reproduce the gh pr create command manually; fix the underlying issue; re-run `forktrust pr` (idempotent) |
 
 ## By stderr message
 

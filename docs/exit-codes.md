@@ -25,6 +25,8 @@ Codes are stable across releases. New codes are added at the high end; existing 
 | 14 | rm/finish: worktree has ignored files that would be permanently deleted |
 | 15 | finish: `[verify]` gate failed (command non-zero, or `require_clean` worktree dirty) |
 | 16 | finish/scope-check: diff touches files outside the declared `--scope` contract |
+| 17 | pr/pr-status: `gh` CLI not available (not installed or not authenticated) |
+| 18 | pr: `gh pr create` returned non-zero (validation, permissions, network) |
 
 ## Full catalog
 
@@ -209,6 +211,39 @@ git -C <main-repo> branch -D <branch>
 
 ---
 
+### `18` — `gh pr create` failed
+
+`forktrust pr` got past the pre-flight, pushed the branch successfully, but the subsequent `gh pr create` returned non-zero. The branch IS pushed (you can verify with `git ls-remote origin fork/<slug>`); only the PR creation failed.
+
+**Common causes:**
+- Repository not on GitHub (gh fails for self-hosted git unless `gh` is configured).
+- No permission to open PRs in the upstream repo.
+- Validation error (e.g. base branch missing).
+- Network blip.
+
+**User:** stderr contains the underlying `gh` error. Reproduce manually:
+```bash
+cd $(forktrust cd <slug>)
+gh pr create --base main --head fork/<slug> --title "..." --body "..."
+```
+
+If gh complains, fix the underlying issue and rerun `forktrust pr <slug>` — it detects the already-pushed branch and just tries the PR create step again.
+
+**Agent:** surface the gh error; do not retry blindly.
+
+---
+
+### `17` — `gh` CLI not available
+
+`forktrust pr` or `forktrust pr-status` could not invoke `gh`. Two reasons (both same exit code; stderr distinguishes):
+
+1. **Not installed**: `gh` binary not on `PATH`. Install: `brew install gh` (macOS/Linux) or see [cli.github.com](https://cli.github.com).
+2. **Not authenticated**: `gh auth status` returned non-zero. Run `gh auth login` and complete the flow.
+
+**Agent:** report to user. Never auto-install or auto-auth.
+
+---
+
 ### `16` — scope contract violated
 
 `finish` (or `forktrust scope <slug> --check`) computed the diff vs the cascade target and found one or more changed files that do NOT match any glob in the worktree's declared scope (`<repo>/.forktrust/scopes/<slug>.toml`).
@@ -282,6 +317,8 @@ exit code
 ├── 14     → list ignored files; ask user; never --force
 ├── 15     → surface verify_failed_command + tail of verify_output; ask user; never --no-verify
 ├── 16     → surface scope_violations list to user; ask user; never --no-scope
+├── 17     → tell user to install gh or run gh auth login; do not auto-install
+├── 18     → surface stderr from gh; show repro command; do not blind-retry
 └── other  → surface raw error
 ```
 

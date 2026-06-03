@@ -13,6 +13,7 @@ Start here if you are a human using forktrust day-to-day:
 - **[Commands reference](./commands.md)** — every command, every flag, every behavior, with examples.
 - **[.forktrustconfig reference](./config.md)** — per-repo TOML config: hooks, ports, verify gate.
 - **[Change contracts (`--scope`)](./scope.md)** — declare which files a task is allowed to touch; `finish` refuses out-of-scope edits.
+- **[PR mode (`forktrust pr`)](./pr.md)** — open a GitHub PR instead of merging locally; `pr-status` reports CI / approvals / mergeable.
 - **[Shell integration](./shell-integration.md)** — `ft` function, `forktrust shell`, prompt integration, autocomplete.
 - **[Troubleshooting](./troubleshooting.md)** — every error message and exit code mapped to a fix.
 

@@ -24,6 +24,7 @@ Full reference lives in [**docs/**](./docs/). Key entry points:
 - [JSON schemas](./docs/json-schema.md) — stable contract for programmatic use
 - [Safety model](./docs/safety-model.md) — every guarantee in depth
 - [Change contracts (`--scope`)](./docs/scope.md) — declare which files a task may touch
+- [PR mode (`pr`, `pr-status`)](./docs/pr.md) — open a GitHub PR via `gh` and inspect its state
 - [Workflows](./docs/workflows.md) — parallel agents, dirty main, abandon-and-restore
 - [Troubleshooting](./docs/troubleshooting.md) — every error mapped to a fix
 - [AI integration](./docs/ai-integration.md) — Claude Code / Cursor / Aider recipes
@@ -48,6 +49,7 @@ Parallel AI coding sessions break in predictable ways. `forktrust` is opinionate
 | Worktree has `.env` or `secret.log` and `rm` silently deletes them | `rm`/`finish` REFUSE (exit 14) on ignored files; `--force` skips the guard |
 | AI agent ships a broken build / failing tests | `[verify]` gate — `finish` refuses (exit 15) unless your declared `commands` all pass. `--no-verify` for explicit bypass. |
 | AI agent edits files outside what was asked ("scope creep") | `--scope` change contract — declare allowed globs at `forktrust new`; `finish` refuses (exit 16) on out-of-scope edits. `--no-scope` for explicit bypass. |
+| AI agent wants to open a PR for human review instead of merging directly | `forktrust pr <slug>` — runs the same pre-flight (verify + scope), pushes the branch, opens GitHub PR via `gh`. `pr-status` reports CI/approvals. |
 
 ## AI-agent integration in one command
 
@@ -148,6 +150,8 @@ Any future edit to `.forktrustconfig` auto-revokes trust until you re-run `forkt
 | `forktrust rm <slug>` | Abandon, snapshotting WIP to `wip/<branch>-YYYYMMDD-HHMMSS-<sha7>` first |
 | `forktrust ai <slug>` | Launch configured AI tool in the worktree |
 | `forktrust scope <slug>` | Show / set / clear / check the change-contract scope for a worktree |
+| `forktrust pr <slug>` | Push branch + open GitHub PR (via `gh`) instead of direct merge |
+| `forktrust pr-status <slug>` | Show PR status (CI / approvals / mergeable) |
 | `forktrust doctor` | Health check (origin, main ref, hooks, ports, brew version) |
 | `forktrust trust [path]` | Approve `.forktrustconfig` command hooks for this repo |
 | `forktrust config add <path>` | Register a repo with forktrust |
@@ -191,6 +195,8 @@ AI agents and CI scripts can switch on these. They will not change across releas
 | 14 | rm/finish refused: worktree has ignored files that would be silently lost (move them out or use `--force`) |
 | 15 | finish refused: `[verify]` gate failed (command exited non-zero, or `require_clean` and worktree dirty after verify) |
 | 16 | finish/scope-check refused: diff touches files outside the declared `--scope` change contract |
+| 17 | pr/pr-status: `gh` CLI not available (install gh, or run `gh auth login`) |
+| 18 | pr: `gh pr create` returned non-zero (see stderr) |
 
 ## How it compares
 
@@ -227,9 +233,9 @@ Shipped in v0.5+: `exec`, `status --watch`, cross-worktree edit prediction, AI a
 Shipped in v0.7.1: `cd`, `shell`, `doctor`, pre-flight refusal model, dry-run parity guarantee.
 Shipped in v0.7.2: **`[verify]` gate** — `finish` refuses to merge unless declared `commands` all exit zero; `--no-verify` bypass; exit 15.
 Shipped in v0.7.3: **Change contract (`--scope`)** — `forktrust new <slug> --scope "globs"` declares allowed paths; `finish` refuses out-of-scope edits (exit 16). New `forktrust scope <slug>` command (show / set / clear / check). `--no-scope` bypass.
+Shipped in v0.7.4: **PR mode** — `forktrust pr <slug>` opens a GitHub PR via `gh` instead of direct merge; `forktrust pr-status <slug>` reports CI / approvals / mergeable. Pre-flight reuse (verify + scope). New exit codes 17 (gh unavailable) + 18 (gh pr create failed).
 
 Next versions — positioning forktrust as the "merge gate for AI agents":
-- **v0.7.4 PR mode**: `forktrust pr <slug>` creates a GitHub PR instead of direct merge
 - **v0.7.5 MCP server**: `forktrust mcp` — native typed tools for Claude Code / Cursor
 - **v0.7.6 Summary validation**: agent must produce a summary; cross-checked against diff
 - **v0.7.7 Templates + policy packs**: `forktrust new --template nextjs`, `forktrust policy init strict-ai`

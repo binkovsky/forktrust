@@ -26,6 +26,15 @@ To abandon (snapshots WIP to `wip/<branch>-YYYYMMDD-HHMMSS-<sha7>` first):
 forktrust rm <slug>
 ```
 
+To open a GitHub PR instead of merging locally (review workflow):
+
+```bash
+forktrust pr <slug>                  # pushes branch + opens PR
+forktrust pr-status <slug>           # checks CI / approvals
+# (human merges via GitHub UI)
+forktrust rm <slug>                  # cleanup after merge
+```
+
 ## Seven hard guarantees you can rely on
 
 1. **Pre-flight refusal.** `finish`/`rm` make all refusal checks BEFORE any git mutation. Non-zero exit ⇒ no commit, merge, push, or branch delete happened.
@@ -52,6 +61,8 @@ Full details: [docs/safety-model.md](./docs/safety-model.md).
 | 14 | ignored files | list them; ask user; never `--force` |
 | 15 | verify gate failed | surface `verify_failed_command` + tail of `verify_output`; ask user; never `--no-verify` |
 | 16 | scope contract violated | surface `scope_violations` to user; ask user; never `--no-scope` |
+| 17 | gh CLI not available | tell user to install gh or run `gh auth login`; never auto-install |
+| 18 | `gh pr create` failed | surface stderr; show repro command; don't blind-retry |
 
 Full table in [docs/exit-codes.md](./docs/exit-codes.md).
 
@@ -104,6 +115,7 @@ Then `ft <slug>` cd's into any worktree. See [docs/shell-integration.md](./docs/
 | Common workflows | [docs/workflows.md](./docs/workflows.md) |
 | Troubleshooting | [docs/troubleshooting.md](./docs/troubleshooting.md) |
 | Change contracts (`--scope`) | [docs/scope.md](./docs/scope.md) |
+| PR mode (`pr`, `pr-status`) | [docs/pr.md](./docs/pr.md) |
 | AI integration recipes | [docs/ai-integration.md](./docs/ai-integration.md) |
 | Shell integration | [docs/shell-integration.md](./docs/shell-integration.md) |
 

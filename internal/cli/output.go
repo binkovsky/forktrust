@@ -80,6 +80,72 @@ type rmResult struct {
 }
 
 // newResult is the stable JSON schema for `forktrust new [--json]`.
+// prResult is the stable JSON schema for `forktrust pr [--json]`.
+// Shape mirrors finishResult's pre-flight fields so a consumer that already
+// understands finish JSON can read pr JSON without learning a second schema.
+type prResult struct {
+	Project      string `json:"project"`
+	Slug         string `json:"slug"`
+	WorktreePath string `json:"worktree_path"`
+	Branch       string `json:"branch"`        // fork/<slug>
+	BaseBranch   string `json:"base_branch"`   // typically "main"
+	DryRun       bool   `json:"dry_run"`
+	HasOrigin    bool   `json:"has_origin"`
+	GhAvailable  bool   `json:"gh_available"`
+
+	// Pre-flight (verify + scope) — same fields as finishResult.
+	VerifyConfigured    bool     `json:"verify_configured"`
+	VerifyRan           bool     `json:"verify_ran"`
+	VerifyPassed        bool     `json:"verify_passed"`
+	VerifyRanCommands   []string `json:"verify_ran_commands,omitempty"`
+	VerifyFailedCommand string   `json:"verify_failed_command,omitempty"`
+	VerifyOutput        string   `json:"verify_output,omitempty"`
+	NoVerify            bool     `json:"no_verify,omitempty"`
+	ScopeConfigured     bool     `json:"scope_configured"`
+	ScopeChecked        bool     `json:"scope_checked"`
+	ScopePassed         bool     `json:"scope_passed"`
+	ScopeAllowed        []string `json:"scope_allowed,omitempty"`
+	ScopeViolations     []string `json:"scope_violations,omitempty"`
+	ScopeViolationCount int      `json:"scope_violation_count,omitempty"`
+	NoScope             bool     `json:"no_scope,omitempty"`
+
+	// PR-specific.
+	WouldRefuse      string `json:"would_refuse,omitempty"`
+	UncommittedFiles int    `json:"uncommitted_files"`
+	CommittedWIP     bool   `json:"committed_wip"`
+	BranchPushed     bool   `json:"branch_pushed"`
+	PRExisted        bool   `json:"pr_existed"` // true if a PR for this branch already existed (we just updated)
+	PRCreated        bool   `json:"pr_created"`
+	PRNumber         int    `json:"pr_number,omitempty"`
+	PRURL            string `json:"pr_url,omitempty"`
+	PRState          string `json:"pr_state,omitempty"`
+	PRTitle          string `json:"pr_title,omitempty"`
+	PRIsDraft        bool   `json:"pr_is_draft,omitempty"`
+}
+
+// prStatusResult is the stable JSON schema for `forktrust pr-status [--json]`.
+type prStatusResult struct {
+	Project        string        `json:"project"`
+	Slug           string        `json:"slug"`
+	Branch         string        `json:"branch"`
+	GhAvailable    bool          `json:"gh_available"`
+	PRExists       bool          `json:"pr_exists"`
+	PRNumber       int           `json:"pr_number,omitempty"`
+	PRURL          string        `json:"pr_url,omitempty"`
+	PRState        string        `json:"pr_state,omitempty"`
+	PRIsDraft      bool          `json:"pr_is_draft,omitempty"`
+	Mergeable      string        `json:"mergeable,omitempty"`
+	ReviewDecision string        `json:"review_decision,omitempty"`
+	Checks         checksSummary `json:"checks"`
+	Title          string        `json:"title,omitempty"`
+	BaseBranch     string        `json:"base_branch,omitempty"`
+	Author         string        `json:"author,omitempty"`
+	Additions      int           `json:"additions,omitempty"`
+	Deletions      int           `json:"deletions,omitempty"`
+	ChangedFiles   int           `json:"changed_files,omitempty"`
+	UpdatedAt      string        `json:"updated_at,omitempty"`
+}
+
 type newResult struct {
 	Project           string   `json:"project"`
 	Slug              string   `json:"slug"`
@@ -109,10 +175,12 @@ type worktreeEntry struct {
 	IsMain   bool   `json:"is_main"`
 }
 
-func emitFinish(r finishResult) error { return emitJSON(finishJSON, r) }
-func emitRm(r rmResult) error         { return emitJSON(rmJSON, r) }
-func emitNew(r newResult) error       { return emitJSON(newJSON, r) }
-func emitList(r listResult) error     { return emitJSON(listJSON, r) }
+func emitFinish(r finishResult) error     { return emitJSON(finishJSON, r) }
+func emitRm(r rmResult) error             { return emitJSON(rmJSON, r) }
+func emitNew(r newResult) error           { return emitJSON(newJSON, r) }
+func emitList(r listResult) error         { return emitJSON(listJSON, r) }
+func emitPR(r prResult) error             { return emitJSON(prJSON, r) }
+func emitPRStatus(r prStatusResult) error { return emitJSON(prStatusJSON, r) }
 
 func emitJSON(on bool, v interface{}) error {
 	if !on {

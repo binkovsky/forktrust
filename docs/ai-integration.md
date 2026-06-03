@@ -52,6 +52,7 @@ On abandon:
 - Auto-`--force` to silence exit 14 (ignored files) or exit 12 (ahead unknown). That's data loss.
 - Auto-`--no-verify` to silence exit 15 (verify gate failed). The whole point of the gate is to prevent shipping broken code; only the user can decide it's safe to bypass.
 - Auto-`--no-scope` to silence exit 16 (scope contract violation). The gate exists to catch scope creep — surface the violation list to the user.
+- Auto-merge a PR opened via `forktrust pr` without explicit user consent. Use `forktrust pr-status --json` to report state; let the user decide when to merge.
 - Edit files in the main checkout. If you find yourself there, stop and use `forktrust new`.
 
 ## Claude Code

@@ -284,6 +284,98 @@ Dry-run order:
 
 Process exit code: 0 if `summary.fail == 0`, 1 otherwise. Warnings don't fail.
 
+## `forktrust pr --json`
+
+Shipped in v0.7.4. See [pr.md](./pr.md) for the workflow context. Shape mirrors finishResult's pre-flight fields plus PR-specific data.
+
+```json
+{
+  "project": "myapp",
+  "slug": "fix-payment",
+  "worktree_path": "/Users/me/code/myapp/.forktrust/worktrees/fix-payment",
+  "branch": "fork/fix-payment",
+  "base_branch": "main",
+  "dry_run": false,
+  "has_origin": true,
+  "gh_available": true,
+  "verify_configured": true,
+  "verify_ran": true,
+  "verify_passed": true,
+  "verify_ran_commands": ["go test ./..."],
+  "scope_configured": true,
+  "scope_checked": true,
+  "scope_passed": true,
+  "scope_allowed": ["internal/payment/**"],
+  "uncommitted_files": 0,
+  "committed_wip": false,
+  "branch_pushed": true,
+  "pr_existed": false,
+  "pr_created": true,
+  "pr_number": 42,
+  "pr_url": "https://github.com/owner/repo/pull/42",
+  "pr_state": "OPEN",
+  "pr_title": "Fix payment race",
+  "pr_is_draft": false
+}
+```
+
+Key fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `gh_available` | bool | True if `gh` is installed and authenticated |
+| `branch_pushed` | bool | True if `git push -u origin <branch>` succeeded |
+| `pr_existed` | bool | True if a PR for this branch already existed at the moment of running (we just updated the branch) |
+| `pr_created` | bool | True if a new PR was opened during this invocation |
+| `pr_number` | int | GitHub PR number; 0 if create succeeded but the post-create lookup failed |
+| `pr_url` | string | Full URL to the PR |
+| `pr_state` | string | `OPEN` / `CLOSED` / `MERGED` |
+| `pr_is_draft` | bool | True if the PR is a draft |
+
+`pr_existed` and `pr_created` are mutually exclusive: at most one is true on a successful run. If both are false, the PR was found pre-existing AND a duplicate-create was correctly avoided.
+
+## `forktrust pr-status --json`
+
+```json
+{
+  "project": "myapp",
+  "slug": "fix-payment",
+  "branch": "fork/fix-payment",
+  "gh_available": true,
+  "pr_exists": true,
+  "pr_number": 42,
+  "pr_url": "https://github.com/owner/repo/pull/42",
+  "pr_state": "OPEN",
+  "pr_is_draft": false,
+  "mergeable": "MERGEABLE",
+  "review_decision": "APPROVED",
+  "checks": {
+    "overall": "SUCCESS",
+    "total": 5,
+    "passing": 5,
+    "failing": 0,
+    "pending": 0
+  },
+  "title": "Fix payment race",
+  "base_branch": "main",
+  "author": "dimas",
+  "additions": 120,
+  "deletions": 15,
+  "changed_files": 7,
+  "updated_at": "2026-06-01T15:00:00Z"
+}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `pr_exists` | bool | False ⇒ no PR open for this branch; other fields are empty |
+| `mergeable` | string | GitHub's mergeability: `MERGEABLE`, `CONFLICTING`, `UNKNOWN` |
+| `review_decision` | string | `APPROVED`, `CHANGES_REQUESTED`, `REVIEW_REQUIRED`, or `""` (no required reviewers) |
+| `checks.overall` | string | `SUCCESS`, `PENDING`, `FAILURE`, `NONE` |
+| `checks.total/passing/failing/pending` | int | Counts by conclusion |
+
+Rollup logic: `FAILURE` overrides `PENDING` overrides `SUCCESS`. `SKIPPED`/`NEUTRAL` count as passing. `CANCELLED`/`TIMED_OUT`/`ACTION_REQUIRED`/`STARTUP_FAILURE` count as failing.
+
 ## Standard error format on coded errors
 
 When forktrust exits non-zero, stderr contains a human message. Programmatic callers should use the exit code, not parse this text. But for completeness, the shape is:

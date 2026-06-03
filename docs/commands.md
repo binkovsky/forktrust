@@ -288,6 +288,52 @@ forktrust exec fix-payment -- npm run dev -- --port 4000
 
 ---
 
+## `forktrust pr <slug>`
+
+Open a GitHub PR for the worktree's branch instead of merging locally. Shipped in v0.7.4. See [pr.md](./pr.md) for the full guide.
+
+```
+forktrust pr <slug>
+  [--title "<text>"] [--body "<text>"] [--base <branch>] [--draft]
+  [--no-verify] [--no-scope]
+  [--project <name>] [--dry-run] [--json]
+```
+
+Pipeline:
+
+1. **PRE-FLIGHT**:
+   - `gh` available (installed + authenticated) → else exit 17
+   - origin remote → else exit 9
+   - aheadRef resolves → else exit 12
+   - `[verify]` (unless `--no-verify`) → else exit 15
+   - scope contract (unless `--no-scope`) → else exit 16
+2. Auto-WIP commit if dirty.
+3. `git push -u origin <branch>` → else exit 4.
+4. `gh pr view <branch>` — if PR exists, print URL; idempotent.
+5. Otherwise `gh pr create` → else exit 18.
+
+Worktree stays alive after `pr`. Clean up with `forktrust rm <slug>` after merge.
+
+Title/body auto-generated from commit subjects if not provided.
+
+---
+
+## `forktrust pr-status <slug>`
+
+Show the GitHub PR status for a worktree.
+
+```
+forktrust pr-status <slug> [--project <name>] [--json]
+```
+
+Reports number, URL, state, mergeable, review decision, CI checks summary, title, author, diff stats, updated time.
+
+Exit 0 even when there is no PR for the branch (JSON: `pr_exists: false`).
+
+Exit codes: 6 (no slug), 7 (ambiguous), 9 (no origin), 17 (gh unavailable).
+
+---
+
 ## `forktrust scope <slug>`
 
 Manage the change-contract scope for a worktree. Shipped in v0.7.3. See [scope.md](./scope.md) for the full guide.

@@ -20,6 +20,8 @@ const (
 	ExitIgnoredFiles      = 14 // rm/finish refused: worktree has ignored files that would be silently lost (use --force to skip)
 	ExitVerifyFailed      = 15 // finish refused: a [verify].commands entry exited non-zero, or require_clean is set and the worktree is dirty after verify
 	ExitScopeViolation    = 16 // finish/scope-check refused: the worktree's diff touches files outside the declared scope (change contract violation)
+	ExitGhNotAvailable    = 17 // pr/pr-status: gh CLI not installed in PATH, or not authenticated (run `gh auth login`)
+	ExitPRCreateFailed    = 18 // pr: `gh pr create` returned non-zero (network, permissions, validation)
 )
 
 // CodedError carries a structured exit code through cobra's error path.

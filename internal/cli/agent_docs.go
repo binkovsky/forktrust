@@ -81,6 +81,11 @@ copy of the codebase so concurrent agents do not step on each other.
   ` + "`finish`" + ` REFUSES (exit 16) if the diff touches files outside the declared
   globs. JSON shows ` + "`scope_violations`" + ` (list) and ` + "`scope_violation_count`" + `.
   ` + "`--no-scope`" + ` bypass with warning; agents must NOT bypass without consent.
+- **PR mode (review workflow):** ` + "`forktrust pr <slug>`" + ` pushes the branch and
+  opens a GitHub PR via ` + "`gh`" + ` instead of merging locally. Same pre-flight as
+  finish (verify + scope), plus a check that ` + "`gh`" + ` is available + authenticated.
+  ` + "`forktrust pr-status <slug>`" + ` reports CI / approvals / mergeable. Worktree
+  stays alive; clean up with ` + "`forktrust rm`" + ` after the PR is merged.
 
 ### Machine-readable output
 
@@ -114,6 +119,8 @@ Exit codes are stable across releases. Switch on them, not on stderr text:
 | 14 | worktree has ignored files that would be lost | tell user to move them out, or pass ` + "`--force`" + ` |
 | 15 | [verify] gate failed (test/lint/build command returned non-zero) | surface ` + "`verify_failed_command`" + ` + tail of ` + "`verify_output`" + ` to user; NEVER ` + "`--no-verify`" + ` without consent |
 | 16 | scope contract violated (diff touches files outside declared --scope) | surface ` + "`scope_violations`" + ` to user; NEVER ` + "`--no-scope`" + ` without consent |
+| 17 | ` + "`gh`" + ` CLI not available (not installed or not authenticated) | tell user to install ` + "`gh`" + ` (` + "`brew install gh`" + `) or run ` + "`gh auth login`" + ` |
+| 18 | ` + "`gh pr create`" + ` failed | surface ` + "`gh`" + ` stderr; do not blind-retry |
 
 ### Inspecting state
 
@@ -156,6 +163,8 @@ spawn a subshell inside the worktree (with ` + "`FORKTRUST_SLUG`" + ` exported).
 | ` + "`forktrust rm <slug>`" + ` | Abandon, pushing WIP to ` + "`wip/*`" + ` first |
 | ` + "`forktrust ai <slug>`" + ` | Launch configured AI tool in the worktree |
 | ` + "`forktrust scope <slug>`" + ` | Show / set / clear / check change-contract scope |
+| ` + "`forktrust pr <slug>`" + ` | Open a GitHub PR via ` + "`gh`" + ` instead of direct merge (worktree stays alive) |
+| ` + "`forktrust pr-status <slug>`" + ` | Show PR status: CI / approvals / mergeable |
 | ` + "`forktrust trust`" + ` | Approve this repo's ` + "`.forktrustconfig`" + ` command hooks |
 | ` + "`forktrust doctor`" + ` | Health check (origin, main ref, hooks, ports) |
 
