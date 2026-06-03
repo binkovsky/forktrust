@@ -146,6 +146,10 @@ Stderr stays human-readable. Always route stderr to a separate stream when pipin
   "main_current_branch": "main",
   "would_refuse": "",
   "has_origin": true,
+  "verify_configured": true,
+  "verify_ran": true,
+  "verify_passed": true,
+  "verify_ran_commands": ["go build ./...", "go test ./..."],
   "merged": true,
   "pushed": true,
   "worktree_removed": true,
@@ -164,6 +168,13 @@ Stderr stays human-readable. Always route stderr to a separate stream when pipin
 | `main_current_branch` | string | Current branch of main checkout (dry-run only) |
 | `would_refuse` | string | DRY-RUN ONLY. Empty if real `finish` would proceed; otherwise human reason ending in `(exit N)`. |
 | `has_origin` | bool | True if `origin` remote configured |
+| `verify_configured` | bool | True if `.forktrustconfig` has a `[verify]` section |
+| `verify_ran` | bool | True if verify was executed in this invocation (false on `--no-verify`, dry-run, or no config) |
+| `verify_passed` | bool | True if every verify command exited zero AND `require_clean` (if set) is satisfied |
+| `verify_ran_commands` | string[] | The verify commands actually attempted (in order). On failure, last entry is the failing command. In dry-run: the full list that would run. |
+| `verify_failed_command` | string | The command that failed verify; empty if verify passed or was skipped |
+| `verify_output` | string | Tail (~8 KiB) of the failing command's combined stdout+stderr; empty if verify passed or was skipped |
+| `no_verify` | bool | True when `--no-verify` bypassed the gate |
 | `merged` | bool | True if merge step completed |
 | `pushed` | bool | True if push to origin completed |
 | `worktree_removed` | bool | True if worktree dir was removed |
@@ -179,6 +190,8 @@ The check order in `would_refuse` exactly matches `runFinish`:
 2. `ignoredN > 0` → exit 14
 3. `current != mainBranch` → exit 10
 4. `mainDirty > 0` → exit 3
+
+Verify (exit 15) is NOT predicted by `would_refuse` — dry-run does not execute verify commands (they have side effects). Use `verify_configured` + `verify_ran_commands` to know what real `finish` will run.
 
 ## `forktrust rm --json`
 

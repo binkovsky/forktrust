@@ -18,6 +18,7 @@ const (
 	ExitAheadUnknown      = 12 // rm/finish refused: could not determine if branch has unpushed work (no main reference resolved)
 	ExitBranchNotDeleted  = 13 // rm: worktree removed and ports released, but `git branch -D` failed (branch lingers)
 	ExitIgnoredFiles      = 14 // rm/finish refused: worktree has ignored files that would be silently lost (use --force to skip)
+	ExitVerifyFailed      = 15 // finish refused: a [verify].commands entry exited non-zero, or require_clean is set and the worktree is dirty after verify
 )
 
 // CodedError carries a structured exit code through cobra's error path.

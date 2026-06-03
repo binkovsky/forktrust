@@ -23,6 +23,7 @@ Codes are stable across releases. New codes are added at the high end; existing 
 | 12 | could not determine ahead count (no main reference resolved) |
 | 13 | rm/finish: worktree removed and ports released, but `git branch -D` failed |
 | 14 | rm/finish: worktree has ignored files that would be permanently deleted |
+| 15 | finish: `[verify]` gate failed (command non-zero, or `require_clean` worktree dirty) |
 
 ## Full catalog
 
@@ -207,6 +208,24 @@ git -C <main-repo> branch -D <branch>
 
 ---
 
+### `15` — `[verify]` gate failed
+
+`finish` ran the `[verify]` commands declared in `.forktrustconfig` and either:
+- one of them exited non-zero (e.g. `go test` failed), or
+- `require_clean = true` is set and the worktree is dirty after verify ran (a verify command wrote files that aren't in `.gitignore`).
+
+**No git mutation happened.** This is a pre-flight refusal — no WIP commit, no merge, no push. The worktree is intact, exactly as before `finish` started.
+
+**JSON consumers:** the failure is fully described in `verify_failed_command`, `verify_ran_commands`, and `verify_output` (the tail of the failing command's stdout+stderr, capped at 8 KiB).
+
+**User:** the stderr names the failing command and reason. Fix the underlying problem (failing test, build error, leftover artifact), then re-run `forktrust finish <slug>`.
+
+If you've already verified manually and just want to ship: `forktrust finish <slug> --no-verify` (prints a stderr warning, sets `no_verify: true` in JSON).
+
+**Agent:** STOP. Surface the failure to the user, including the `verify_failed_command` and the last few lines of `verify_output`. Do NOT use `--no-verify` — the gate exists to prevent shipping broken code; only the user can decide it's safe.
+
+---
+
 ### `14` — worktree has ignored files that would be lost
 
 `rm` or `finish` detected ignored files (files matched by `.gitignore` but not actually tracked) in the worktree. `git worktree remove` would silently delete them.
@@ -243,6 +262,7 @@ exit code
 ├── 12     → ask user; never --force
 ├── 13     → tell user branch lingers; work is safe
 ├── 14     → list ignored files; ask user; never --force
+├── 15     → surface verify_failed_command + tail of verify_output; ask user; never --no-verify
 └── other  → surface raw error
 ```
 

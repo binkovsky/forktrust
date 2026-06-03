@@ -71,6 +71,11 @@ copy of the codebase so concurrent agents do not step on each other.
   origin before removing. Work is never lost without ` + "`--force`" + `.
   The ` + "`<sha7>`" + ` suffix is the short SHA of the WIP commit; it makes wip/*
   names unique even when ` + "`rm`" + ` is run on different branches in the same second.
+- **Verify gate:** if ` + "`.forktrustconfig`" + ` declares ` + "`[verify].commands`" + `, ` + "`finish`" + `
+  REFUSES (exit 15) unless every command exits zero. The commands typically
+  run tests / linters / builds. ` + "`--no-verify`" + ` bypasses with a stderr warning,
+  but agents must NOT use it without explicit user consent — the gate exists
+  to prevent shipping broken code.
 
 ### Machine-readable output
 
@@ -102,6 +107,7 @@ Exit codes are stable across releases. Switch on them, not on stderr text:
 | 12 | could not determine ahead count (no main reference resolved) | push origin/main, or re-run ` + "`rm --force`" + ` |
 | 13 | rm/finish: worktree removed but ` + "`git branch -D`" + ` failed (branch lingers) | tell user the branch is still around |
 | 14 | worktree has ignored files that would be lost | tell user to move them out, or pass ` + "`--force`" + ` |
+| 15 | [verify] gate failed (test/lint/build command returned non-zero) | surface ` + "`verify_failed_command`" + ` + tail of ` + "`verify_output`" + ` to user; NEVER ` + "`--no-verify`" + ` without consent |
 
 ### Inspecting state
 

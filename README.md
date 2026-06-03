@@ -45,6 +45,7 @@ Parallel AI coding sessions break in predictable ways. `forktrust` is opinionate
 | Command fails halfway and leaves a phantom WIP commit | **Pre-flight refusal**: all checks run BEFORE any git mutation. Non-zero exit = no side effects. |
 | Dry-run says "OK" but the real command then refuses | **Dry-run matches reality**: `--dry-run --json` predicts the exact exit code the real command would return |
 | Worktree has `.env` or `secret.log` and `rm` silently deletes them | `rm`/`finish` REFUSE (exit 14) on ignored files; `--force` skips the guard |
+| AI agent ships a broken build / failing tests | `[verify]` gate — `finish` refuses (exit 15) unless your declared `commands` all pass. `--no-verify` for explicit bypass. |
 
 ## AI-agent integration in one command
 
@@ -185,6 +186,7 @@ AI agents and CI scripts can switch on these. They will not change across releas
 | 12 | rm/finish could not determine ahead count (push origin/main, or re-run with `--force`) |
 | 13 | rm: worktree removed and ports released, but `git branch -D` failed (branch lingers) |
 | 14 | rm/finish refused: worktree has ignored files that would be silently lost (move them out or use `--force`) |
+| 15 | finish refused: `[verify]` gate failed (command exited non-zero, or `require_clean` and worktree dirty after verify) |
 
 ## How it compares
 
@@ -219,10 +221,10 @@ Hard differentiators (no verified competitor offers these):
 
 Shipped in v0.5+: `exec`, `status --watch`, cross-worktree edit prediction, AI adapter, `agent-docs`.
 Shipped in v0.7.1: `cd`, `shell`, `doctor`, pre-flight refusal model, dry-run parity guarantee.
+Shipped in v0.7.2: **`[verify]` gate** — `finish` refuses to merge unless declared `commands` all exit zero; `--no-verify` bypass; exit 15.
 
 Next versions — positioning forktrust as the "merge gate for AI agents":
 
-- **v0.7.2 Verify gate**: `[verify]` section in `.forktrustconfig`; `finish` refuses without green tests
 - **v0.7.3 Change contract**: `forktrust new <slug> --scope "auth/**"` — refuse out-of-scope edits at `finish`
 - **v0.7.4 PR mode**: `forktrust pr <slug>` creates a GitHub PR instead of direct merge
 - **v0.7.5 MCP server**: `forktrust mcp` — native typed tools for Claude Code / Cursor

@@ -209,14 +209,15 @@ type = "command"
 run  = "cp .env.local.app .env.local.user"
 ```
 
-### Go monorepo with verify-on-finish (PLANNED for v0.7.2)
+### Go monorepo with verify-on-finish
 
 ```toml
-# Not yet implemented — coming in v0.7.2
 [verify]
-commands     = ["go build ./...", "go test ./..."]
+commands      = ["go build ./...", "go test ./...", "go vet ./..."]
 require_clean = true
 ```
+
+See [the full `[verify]` reference](#verify-merge-gate) below.
 
 ### Backend with database setup
 
@@ -237,11 +238,132 @@ run  = "psql -d myapp_{{.Slug}} -f db/schema.sql"
 
 (Requires `forktrust trust` because of `command` hooks.)
 
+## `[verify]` (merge gate)
+
+Shipped in v0.7.2. Declares commands that MUST exit zero before `forktrust finish` is allowed to merge a worktree into main.
+
+```toml
+[verify]
+commands      = ["go build ./...", "go test ./...", "go vet ./..."]
+require_clean = true
+```
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `commands` | string[] | (required if section present) | Shell commands to run in order. Each via `sh -c <command>`. |
+| `require_clean` | bool | `false` | If true, after every command passes, the worktree must still be `git status --porcelain`-clean. Catches build artifacts not in `.gitignore`. |
+
+### How it integrates with `finish`
+
+Verify runs in the `finish` pre-flight phase — AFTER ignored-files / wrong-branch / dirty-main checks, BEFORE the WIP commit. If verify fails, no git mutation has happened: no commit, no merge, no push.
+
+Pre-flight order:
+1. aheadRef resolves → else exit 12
+2. Ignored files present → else exit 14
+3. Main on wrong branch → else exit 10
+4. Main dirty → else exit 3
+5. **Verify** → else exit 15
+6. Auto-WIP commit → merge → push → cleanup
+
+### Execution environment
+
+Each command runs with:
+- `cwd` set to the worktree root
+- environment = current env + the worktree's `.env.local` parsed via the strict KEY=VALUE reader (NO shell eval)
+- stdout/stderr streamed live to user's stderr (so test output is visible)
+- the failing command's combined output (tail, 8 KiB) is captured into JSON's `verify_output`
+
+### Bypass: `--no-verify`
+
+```bash
+forktrust finish my-task --no-verify
+```
+
+Prints a `WARNING:` to stderr listing the commands that were skipped, then proceeds with the merge. JSON: `no_verify: true`.
+
+Use only when you have already verified manually. Never as a default — the whole point of the gate is to prevent shipping broken code.
+
+### `--dry-run` behavior
+
+`forktrust finish --dry-run --json` does NOT execute verify commands (they have side effects). Instead, dry-run reports:
+
+```json
+{
+  "verify_configured": true,
+  "verify_ran": false,
+  "verify_ran_commands": ["go build ./...", "go test ./..."]
+}
+```
+
+The dry-run cannot predict whether verify would pass. To know that, either run verify manually (`forktrust exec my-task -- go test ./...`) or run real `forktrust finish` (no `--dry-run`).
+
+### Recipe library
+
+#### JavaScript / Node
+
+```toml
+[verify]
+commands = [
+  "npm ci",
+  "npm run lint",
+  "npm test",
+  "npm run build",
+]
+```
+
+#### Python
+
+```toml
+[verify]
+commands = [
+  "ruff check .",
+  "mypy .",
+  "pytest -x",
+]
+```
+
+#### Rust
+
+```toml
+[verify]
+commands = [
+  "cargo fmt --check",
+  "cargo clippy -- -D warnings",
+  "cargo test",
+]
+require_clean = true
+```
+
+#### Mixed monorepo
+
+```toml
+[verify]
+commands = [
+  "make verify",       # delegates to your existing CI gate
+]
+```
+
+### When verify fails
+
+JSON `finish` output includes the diagnosis:
+
+```json
+{
+  "verify_configured": true,
+  "verify_ran": true,
+  "verify_passed": false,
+  "verify_ran_commands": ["go build ./...", "go test ./..."],
+  "verify_failed_command": "go test ./...",
+  "verify_output": "... (truncated)\n--- FAIL: TestX\n  ..."
+}
+```
+
+Plus `exit code 15`. See [exit-codes.md](./exit-codes.md#15--verify-gate-failed).
+
 ## Future sections (planned)
 
 These are documented in the [roadmap](../README.md#roadmap) but not implemented yet:
 
-- `[verify]` (v0.7.2) — commands that must pass before `finish` will merge.
 - `[scope]` / `--scope` flag (v0.7.3) — restrict which paths the worktree may modify.
 - `[summary]` (v0.7.6) — schema for the post-task summary requirement.
 - `[[process]]` (v0.9.0) — declare a dev server for `forktrust up/down/logs/web`.

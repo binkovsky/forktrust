@@ -46,6 +46,7 @@ If you are an AI coding agent (Claude Code, Cursor, Aider, Codex, etc.), read th
 | **dry-run parity** | Guarantee that `<cmd> --dry-run --json`'s `would_refuse` field and exit code exactly match what the real command would do. |
 | **hook** | An entry in `[[hooks.post_create]]` that fires after `forktrust new`. Three types: `copy`, `symlink`, `command`. |
 | **trust gate** | Approval mechanism for `command` hooks: SHA-pinned `.forktrustconfig`. Any edit auto-revokes trust until `forktrust trust` is re-run. |
+| **verify gate** | `[verify]` section in `.forktrustconfig` declaring commands that MUST exit zero before `finish` may merge. Refusal = exit 15 in the finish pre-flight. Skipped via `--no-verify` (with warning). |
 | **port block** | Aligned range (e.g. `3000-3009`, `3010-3019`) reserved per-slug and written into `.env.local`. Auto-released on `finish` / `rm`. |
 | **ManagedHeader** | Exact first line forktrust writes into every `.env.local`: `# Managed by forktrust. Do not edit; values are overwritten on each `forktrust new`.\n`. Used as ownership proof. |
 

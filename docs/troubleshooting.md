@@ -23,6 +23,7 @@ For the full catalog see [exit-codes.md](./exit-codes.md). Quick fixes:
 | 12 | `git push -u origin main`, or create local `main` |
 | 13 | `git worktree list`; find what's checked out, then `git branch -D` manually |
 | 14 | Move ignored files out, or `--force` (rm only) |
+| 15 | Fix the failing verify command, or `--no-verify` on `finish` (with explicit consent) |
 
 ## By stderr message
 
@@ -60,6 +61,25 @@ cd <worktree> && git push origin HEAD:refs/heads/wip/<branch>-<stamp>-<sha7>
 ```
 
 Then re-run `forktrust rm <slug>`. **DO NOT use `--force`** — that drops the WIP.
+
+### `REFUSE: [verify] gate failed.`
+
+`finish` exit 15. Stderr lists the failing command and reason. Real test output was already streamed live above the REFUSE line. JSON has `verify_failed_command` and a tail of `verify_output`.
+
+Fix:
+1. Run the failing command yourself in the worktree:
+   ```bash
+   forktrust exec <slug> -- <failing-command>
+   ```
+2. Fix what it complains about.
+3. Re-run `forktrust finish <slug>`.
+
+Bypass (only when you have verified manually):
+```bash
+forktrust finish <slug> --no-verify
+```
+
+`require_clean` failure (`verify_failed_command: "(require_clean)"`) means a verify command wrote files that weren't in `.gitignore`. Either `.gitignore` them or fix the command not to create them.
 
 ### `REFUSE: worktree has N ignored file(s)`
 

@@ -26,13 +26,14 @@ To abandon (snapshots WIP to `wip/<branch>-YYYYMMDD-HHMMSS-<sha7>` first):
 forktrust rm <slug>
 ```
 
-## Five hard guarantees you can rely on
+## Six hard guarantees you can rely on
 
 1. **Pre-flight refusal.** `finish`/`rm` make all refusal checks BEFORE any git mutation. Non-zero exit ⇒ no commit, merge, push, or branch delete happened.
-2. **Dry-run parity.** `<cmd> --dry-run --json`'s `would_refuse` and exit code exactly match the real command.
+2. **Dry-run parity.** `<cmd> --dry-run --json`'s `would_refuse` and exit code exactly match the real command. (Exception: dry-run does NOT execute `[verify]` commands; see verify gate below.)
 3. **Never-lose-WIP.** `rm` pushes uncommitted/unpushed work to `wip/<branch>-YYYYMMDD-HHMMSS-<sha7>` on origin before touching local state. Only `--force` skips it.
 4. **Refuse-on-conflict.** `finish` aborts the merge on any conflict (exit 2). No `--strategy ours/theirs`, ever.
 5. **Refuse-on-ignored-loss.** `rm`/`finish` exit 14 if the worktree has ignored files that `git worktree remove` would silently delete. `--force` skips (rm only).
+6. **Verify gate.** If `.forktrustconfig` declares `[verify].commands`, `finish` refuses (exit 15) unless every command exits zero. Skippable via `--no-verify` (with stderr warning) but agents must NOT bypass without user consent.
 
 Full details: [docs/safety-model.md](./docs/safety-model.md).
 
@@ -48,6 +49,7 @@ Full details: [docs/safety-model.md](./docs/safety-model.md).
 | 10 | main on wrong branch | tell user to `git checkout` |
 | 12 | no main ref resolved | ask user; never `--force` |
 | 14 | ignored files | list them; ask user; never `--force` |
+| 15 | verify gate failed | surface `verify_failed_command` + tail of `verify_output`; ask user; never `--no-verify` |
 
 Full table in [docs/exit-codes.md](./docs/exit-codes.md).
 

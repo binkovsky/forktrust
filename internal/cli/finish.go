@@ -14,10 +14,11 @@ import (
 )
 
 var (
-	finishMessage string
-	finishProject string
-	finishDryRun  bool
-	finishJSON    bool
+	finishMessage  string
+	finishProject  string
+	finishDryRun   bool
+	finishJSON     bool
+	finishNoVerify bool
 )
 
 var finishCmd = &cobra.Command{
@@ -48,7 +49,8 @@ Exit codes:
   10  main checkout is on the wrong branch
   12  could not determine ahead count (no main reference resolved)
   13  worktree removed but git branch -D failed (branch lingers)
-  14  worktree has ignored files that would be permanently deleted`,
+  14  worktree has ignored files that would be permanently deleted
+  15  verify gate failed: a [verify].commands entry exited non-zero, or require_clean is set and the worktree is dirty after verify`,
 	Args: cobra.ExactArgs(1),
 	RunE: runFinish,
 }
@@ -58,6 +60,7 @@ func init() {
 	finishCmd.Flags().StringVarP(&finishProject, "project", "p", "", "target project name (required if more than one is registered)")
 	finishCmd.Flags().BoolVar(&finishDryRun, "dry-run", false, "print the plan without executing anything")
 	finishCmd.Flags().BoolVar(&finishJSON, "json", false, "emit a structured JSON result on stdout (one object)")
+	finishCmd.Flags().BoolVar(&finishNoVerify, "no-verify", false, "skip the [verify] gate (prints a warning); only use when you really know what you're doing")
 }
 
 func runFinish(_ *cobra.Command, args []string) error {
@@ -161,7 +164,42 @@ func runFinish(_ *cobra.Command, args []string) error {
 		return coded(ExitDirtyMain, fmt.Errorf("main worktree is dirty (%d files)", mainDirty))
 	}
 
-	// 2d. NOW it's safe to commit uncommitted WIP on the worktree branch.
+	// 2d. Verify gate. Last pre-flight check before any git mutation.
+	// Skipped under --no-verify (with stderr warning) or when [verify] absent.
+	repoCfg, _ := config.LoadRepoConfig(proj.Path) // validated at `new` time; ignore reparse error here, fall through to no-verify behavior
+	r.VerifyConfigured = repoCfg != nil && repoCfg.Verify != nil
+	if finishNoVerify {
+		r.NoVerify = true
+		if r.VerifyConfigured {
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, "WARNING: --no-verify SKIPPED the [verify] gate. The merge will land WITHOUT running:")
+			for _, c := range repoCfg.Verify.Commands {
+				fmt.Fprintf(os.Stderr, "  - %s\n", c)
+			}
+			fmt.Fprintln(os.Stderr, "Only use --no-verify when you have already verified manually.")
+		}
+	} else if r.VerifyConfigured {
+		vr := runVerify(finishJSON, wtPath, repoCfg.Verify)
+		r.VerifyRan = true
+		r.VerifyRanCommands = vr.RanCommands
+		r.VerifyPassed = vr.Passed
+		if !vr.Passed {
+			r.VerifyFailedCommand = vr.FailedCommand
+			r.VerifyOutput = vr.Output
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintf(os.Stderr, "REFUSE: [verify] gate failed.\n")
+			fmt.Fprintf(os.Stderr, "Failed command: %s\n", vr.FailedCommand)
+			fmt.Fprintf(os.Stderr, "Reason: %s\n", vr.FailureReason)
+			fmt.Fprintln(os.Stderr, "Fix the underlying problem and re-run `forktrust finish`, or pass --no-verify to bypass (not recommended).")
+			// Emit JSON with the verify failure context BEFORE returning so
+			// programmatic consumers can read verify_failed_command / verify_output.
+			// (Same pattern as ExitBranchNotDeleted path: emit, then return coded.)
+			_ = emitFinish(r)
+			return coded(ExitVerifyFailed, fmt.Errorf("verify failed at command %q: %s", vr.FailedCommand, vr.FailureReason))
+		}
+	}
+
+	// 2e. NOW it's safe to commit uncommitted WIP on the worktree branch.
 	if dirty > 0 {
 		msg := finishMessage
 		if msg == "" {
@@ -305,11 +343,24 @@ func previewFinish(r finishResult, mainBranch, mainPath string) error {
 	// previewFinish must surface every refusal that runFinish would hit.
 	ignoredN, _ := git.IgnoredCount(r.WorktreePath)
 
+	// Record verify config in the dry-run result so consumers know whether the
+	// real command would run a verify gate. We do NOT execute verify commands
+	// in dry-run — that would be a side effect (test runners create files,
+	// write to network, etc.). The would_refuse field cannot predict verify
+	// failure; callers that need to know must run verify themselves or run
+	// the real `forktrust finish`.
+	repoCfg, _ := config.LoadRepoConfig(mainPath)
+	if repoCfg != nil && repoCfg.Verify != nil {
+		r.VerifyConfigured = true
+		r.VerifyRanCommands = repoCfg.Verify.Commands
+	}
+	if finishNoVerify {
+		r.NoVerify = true
+	}
+
 	// Mirror runFinish refusal order exactly — dry-run must agree with real finish.
 	// Real finish order: (1) no main ref → exit 12; (2) ignored files → exit 14;
-	// (3) wrong branch → exit 10; (4) dirty main → exit 3.
-	// The aheadKnown check happens in runFinish at step 1 (before any pre-flight),
-	// so it must be first here too.
+	// (3) wrong branch → exit 10; (4) dirty main → exit 3; (5) verify → exit 15 (not predicted).
 	switch {
 	case !aheadKnown:
 		r.WouldRefuse = fmt.Sprintf("no main reference resolved (exit %d). Push origin/%s or create local %s first.", ExitAheadUnknown, mainBranch, mainBranch)
@@ -338,6 +389,15 @@ func previewFinish(r finishResult, mainBranch, mainPath string) error {
 		fmt.Printf("  ahead of main:  ? (unknown — no main reference resolved)\n")
 	}
 	fmt.Printf("  main dirty:     %d file(s)%s\n", mainDirty, dirtyWarn(mainDirty))
+	switch {
+	case r.NoVerify && r.VerifyConfigured:
+		fmt.Printf("  verify:         CONFIGURED but --no-verify will SKIP %d command(s)\n", len(r.VerifyRanCommands))
+	case r.VerifyConfigured:
+		fmt.Printf("  verify:         %d command(s) WILL RUN (dry-run does not execute them)\n", len(r.VerifyRanCommands))
+		for _, c := range r.VerifyRanCommands {
+			fmt.Printf("                    - %s\n", c)
+		}
+	}
 	fmt.Println()
 	if r.WouldRefuse != "" {
 		fmt.Printf("WOULD REFUSE: %s\n", r.WouldRefuse)
@@ -345,6 +405,10 @@ func previewFinish(r finishResult, mainBranch, mainPath string) error {
 	}
 	fmt.Println("Would:")
 	step := 1
+	if r.VerifyConfigured && !r.NoVerify {
+		fmt.Printf("  %d. run [verify] (%d command(s); refuse on first non-zero)\n", step, len(r.VerifyRanCommands))
+		step++
+	}
 	if r.UncommittedFiles > 0 {
 		msg := r.Message
 		if msg == "" {

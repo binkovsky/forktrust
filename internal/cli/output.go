@@ -23,11 +23,25 @@ type finishResult struct {
 	MainCurrentBranch string `json:"main_current_branch,omitempty"` // dry-run accuracy: actual HEAD of main checkout
 	WouldRefuse       string `json:"would_refuse,omitempty"`        // dry-run: reason actual command would refuse, "" if it would proceed
 	HasOrigin         bool   `json:"has_origin"`
-	Merged            bool   `json:"merged"`
-	Pushed            bool   `json:"pushed"`
-	WorktreeRemoved   bool   `json:"worktree_removed"`
-	BranchDeleted     bool   `json:"branch_deleted"`
-	BranchKept        bool   `json:"branch_kept"` // R5: same shape as rmResult — branch -D failed but worktree was removed
+	// Verify gate (v0.7.2). All four fields are present whether or not the
+	// repo has a [verify] section, so JSON consumers can rely on them:
+	//   - VerifyConfigured: repo declared a [verify] section
+	//   - VerifyRan: verify was executed in this invocation (false on --no-verify or dry-run or no config)
+	//   - VerifyPassed: every command exited zero AND require_clean (if set) is satisfied
+	//   - VerifyFailedCommand: the command that failed (empty if passed)
+	//   - VerifyRanCommands: the list of commands actually attempted
+	VerifyConfigured    bool     `json:"verify_configured"`
+	VerifyRan           bool     `json:"verify_ran"`
+	VerifyPassed        bool     `json:"verify_passed"`
+	VerifyRanCommands   []string `json:"verify_ran_commands,omitempty"`
+	VerifyFailedCommand string   `json:"verify_failed_command,omitempty"`
+	VerifyOutput        string   `json:"verify_output,omitempty"` // tail of failing command's combined stdout+stderr (capped)
+	NoVerify            bool     `json:"no_verify,omitempty"`     // true when --no-verify bypassed the gate
+	Merged              bool     `json:"merged"`
+	Pushed              bool     `json:"pushed"`
+	WorktreeRemoved     bool     `json:"worktree_removed"`
+	BranchDeleted       bool     `json:"branch_deleted"`
+	BranchKept          bool     `json:"branch_kept"` // R5: same shape as rmResult — branch -D failed but worktree was removed
 }
 
 // rmResult is the stable JSON schema for `forktrust rm [--json]`.

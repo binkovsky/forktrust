@@ -113,7 +113,7 @@ myapp    add-search    fork/add-search       0      1       0  3010-3019   4h
 The canonical "ship it" command: commit + merge + push + cleanup.
 
 ```
-forktrust finish <slug> [--message "<text>"] [--dry-run] [--project <name>] [--json]
+forktrust finish <slug> [--message "<text>"] [--no-verify] [--dry-run] [--project <name>] [--json]
 ```
 
 Pipeline (all pre-flight checks happen BEFORE any mutation):
@@ -123,6 +123,7 @@ Pipeline (all pre-flight checks happen BEFORE any mutation):
    - Worktree has ignored files (forktrust-managed `.env.local` excluded) → exit 14.
    - Main checkout on wrong branch → exit 10.
    - Main checkout dirty → exit 3.
+   - `[verify]` commands (if configured, unless `--no-verify`) → exit 15.
 2. Commit uncommitted WIP on the worktree branch (message: `--message` or `WIP: <slug>`).
 3. Compute commits-ahead. If 0 → fast-path: remove worktree + release ports + delete branch.
 4. Pull origin/main if origin is configured.
@@ -134,7 +135,8 @@ Pipeline (all pre-flight checks happen BEFORE any mutation):
 
 Flags:
 - `-m, --message <text>` — commit message for the auto-WIP commit. Default: `WIP: <slug>`.
-- `--dry-run` — emit the would-refuse reason without executing. Exit 0; the JSON's `would_refuse` field tells you what (if anything) would have blocked.
+- `--no-verify` — skip the `[verify]` gate (prints a stderr WARNING listing the skipped commands). JSON: `no_verify: true`. Use only when you have already verified manually.
+- `--dry-run` — emit the would-refuse reason without executing. Exit 0; the JSON's `would_refuse` field tells you what (if anything) would have blocked. Note: dry-run does NOT execute verify commands (they would be a side effect); it reports `verify_configured` + `verify_ran_commands` so consumers know what the real command would do.
 
 Example success:
 

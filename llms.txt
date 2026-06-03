@@ -40,13 +40,14 @@ Abandon (snapshots WIP first):
 forktrust rm <slug>                        # → wip/<branch>-YYYYMMDD-HHMMSS-<sha7>
 ```
 
-## Five hard guarantees
+## Six hard guarantees
 
 1. **Pre-flight refusal** — non-zero exit ⇒ no git mutation happened.
-2. **Dry-run parity** — `--dry-run --json`'s `would_refuse` exactly matches real-command behavior.
+2. **Dry-run parity** — `--dry-run --json`'s `would_refuse` exactly matches real-command behavior (exception: verify is not executed in dry-run).
 3. **Never-lose-WIP** — `rm` pushes to `wip/<branch>-YYYYMMDD-HHMMSS-<sha7>` before removing.
 4. **Refuse-on-conflict** — `finish` aborts merge on conflict (exit 2). Never `--strategy`.
 5. **Refuse-on-ignored-loss** — exit 14 if `git worktree remove` would silently delete ignored files.
+6. **Verify gate** — `[verify]` section in `.forktrustconfig` declares commands that must exit zero before `finish` may merge. Exit 15 on failure. Bypass: `finish --no-verify` (warned).
 
 `.env.local` is treated as forktrust-managed only if (a) regular file at worktree root, (b) starts with the exact `# Managed by forktrust...` header.
 
@@ -68,6 +69,7 @@ forktrust rm <slug>                        # → wip/<branch>-YYYYMMDD-HHMMSS-<s
 | 12 | rm/finish could not determine ahead count |
 | 13 | rm/finish: worktree removed but branch -D failed |
 | 14 | rm/finish refused: ignored files in worktree would be permanently deleted |
+| 15 | finish refused: [verify] gate failed (command non-zero or require_clean post-verify dirty) |
 
 Full action table: [docs/exit-codes.md](https://github.com/binkovsky/forktrust/blob/main/docs/exit-codes.md).
 

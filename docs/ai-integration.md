@@ -50,6 +50,7 @@ On abandon:
 - Auto-resolve a merge conflict (exit 2). Hand to user.
 - Auto-`forktrust config add` an unregistered repo (exit 11) without asking.
 - Auto-`--force` to silence exit 14 (ignored files) or exit 12 (ahead unknown). That's data loss.
+- Auto-`--no-verify` to silence exit 15 (verify gate failed). The whole point of the gate is to prevent shipping broken code; only the user can decide it's safe to bypass.
 - Edit files in the main checkout. If you find yourself there, stop and use `forktrust new`.
 
 ## Claude Code

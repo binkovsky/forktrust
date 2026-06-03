@@ -37,8 +37,37 @@ const RepoConfigFile = ".forktrustconfig"
 // worktree. Hooks run in declared order; if one fails, subsequent hooks are
 // skipped and the worktree is left in place for inspection.
 type RepoConfig struct {
-	Hooks Hooks        `toml:"hooks"`
-	Ports *PortsConfig `toml:"ports,omitempty"`
+	Hooks  Hooks         `toml:"hooks"`
+	Ports  *PortsConfig  `toml:"ports,omitempty"`
+	Verify *VerifyConfig `toml:"verify,omitempty"`
+}
+
+// VerifyConfig declares commands that MUST exit zero before `forktrust finish`
+// is allowed to merge a worktree into main. When present, the verify gate runs
+// in the finish pre-flight (before any git mutation). If any command exits
+// non-zero, finish refuses with exit 15 (ExitVerifyFailed) and no commit,
+// merge, push, or branch operation happens.
+//
+// Bypass with `forktrust finish --no-verify` (prints a warning to stderr).
+//
+// Example:
+//
+//	[verify]
+//	commands      = ["go build ./...", "go test ./...", "go vet ./..."]
+//	require_clean = true
+//
+// require_clean: if true, after all commands pass, the worktree must still be
+// clean (`git status --porcelain` returns no entries). This catches verify
+// commands that write build artifacts or generated files that were not in
+// .gitignore — the merge would otherwise carry uncommitted byproducts.
+type VerifyConfig struct {
+	// Commands is the list of shell commands to run in order. Each runs via
+	// `sh -c <command>` with cwd set to the worktree root and the worktree's
+	// .env.local pre-parsed into env (KEY=VALUE; no shell eval — same as
+	// command hooks).
+	Commands []string `toml:"commands"`
+	// RequireClean: if true, refuse if the worktree is dirty after verify runs.
+	RequireClean bool `toml:"require_clean,omitempty"`
 }
 
 // PortsConfig declares an aligned port-block allocation policy for this repo.
@@ -146,6 +175,16 @@ func (c *RepoConfig) Validate() error {
 		for i, v := range c.Ports.Vars {
 			if !envVarNameRE.MatchString(v) {
 				return fmt.Errorf("[ports].vars[%d] = %q: must match %s (POSIX env var name; newline/equals/space rejected to prevent .env.local injection)", i, v, envVarNameRE.String())
+			}
+		}
+	}
+	if c.Verify != nil {
+		if len(c.Verify.Commands) == 0 {
+			return fmt.Errorf("[verify] section present but commands is empty; either remove the section or list at least one command")
+		}
+		for i, cmd := range c.Verify.Commands {
+			if cmd == "" {
+				return fmt.Errorf("[verify].commands[%d] is empty; remove it or replace with a real shell command", i)
 			}
 		}
 	}

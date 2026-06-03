@@ -2,19 +2,20 @@
 
 This document is the authoritative description of forktrust's safety guarantees. If you're an AI agent reasoning about whether an operation is safe, read this first.
 
-There are five named guarantees:
+There are six named guarantees:
 
 1. [Pre-flight refusal](#1-pre-flight-refusal)
 2. [Dry-run parity](#2-dry-run-parity)
 3. [Never-lose-WIP](#3-never-lose-wip)
 4. [Refuse-on-conflict](#4-refuse-on-conflict)
 5. [Refuse-on-ignored-loss](#5-refuse-on-ignored-loss)
+6. [Verify gate](#6-verify-gate)
 
 Plus three structural protections:
 
-6. [`.env.local` ownership rules](#6-envlocal-ownership-rules)
-7. [Path safety in hooks](#7-path-safety-in-hooks)
-8. [Trust gate](#8-trust-gate)
+7. [`.env.local` ownership rules](#7-envlocal-ownership-rules)
+8. [Path safety in hooks](#8-path-safety-in-hooks)
+9. [Trust gate](#9-trust-gate)
 
 ## 1. Pre-flight refusal
 
@@ -157,7 +158,88 @@ The bypass surface is closed by tightening both:
 - The path check: `filepath.Clean(line) == ".env.local"` (matches only root path, not nested).
 - The content check: `os.Lstat` first refuses symlinks; then read N bytes and compare against the full `ManagedHeader` (not a prefix — so `# Managed by forktrust but actually mine` is correctly counted).
 
-## 6. `.env.local` ownership rules
+## 6. Verify gate
+
+**Guarantee:** when a repo declares a `[verify]` section in `.forktrustconfig`, `forktrust finish` will refuse to merge unless every verify command exits zero (and, if `require_clean = true`, the worktree is still clean after they all ran).
+
+This turns forktrust from "worktree manager" into "merge gate for AI agents." An agent cannot ship code that doesn't build or fails tests.
+
+### Where in the pipeline
+
+Verify runs in the `finish` pre-flight phase — AFTER ignored-files / wrong-branch / dirty-main checks, BEFORE the WIP commit and the merge. If verify fails, **no git mutation happened**: no commit, no merge, no push, no branch operations. The worktree is exactly as it was before `finish` started.
+
+Pre-flight order (refusals only):
+1. `aheadKnown` → exit 12
+2. ignored files → exit 14
+3. wrong main branch → exit 10
+4. dirty main → exit 3
+5. **verify** → exit 15
+
+### Execution
+
+Each command in `[verify].commands` runs via `sh -c <command>` with:
+- `cwd` set to the worktree root
+- env = current environment + the worktree's `.env.local` parsed as KEY=VALUE (NO shell eval; same contract as command hooks — see [docs/config.md](./config.md#type--command))
+- stdout/stderr streamed live to the user's stderr (so test output is visible)
+- the failing command's combined output (tail, 8 KiB max) captured into JSON `verify_output`
+
+Commands run in declared order. On first failure, remaining commands do not run.
+
+### `require_clean`
+
+If `require_clean = true` and all commands pass, forktrust runs `git status --porcelain` against the worktree. If non-empty, verify is reported as failed with `verify_failed_command: "(require_clean)"`. This catches build artifacts that aren't in `.gitignore` — the merge would otherwise carry uncommitted byproducts into main.
+
+### Bypass: `--no-verify`
+
+```bash
+forktrust finish my-task --no-verify
+```
+
+Prints a stderr WARNING listing the skipped commands. Sets `no_verify: true` in JSON. The merge proceeds without running verify.
+
+This is documented as "only for when you have verified manually." Agents are instructed never to use it without explicit user consent — the gate exists for a reason.
+
+### Dry-run
+
+`forktrust finish --dry-run --json` does NOT run verify commands (they have side effects: tests write files, hit networks, mutate state). Instead, dry-run reports:
+
+```json
+{
+  "verify_configured": true,
+  "verify_ran": false,
+  "verify_ran_commands": ["go build ./...", "go test ./..."]
+}
+```
+
+This means **dry-run parity has a documented exception for verify:** `would_refuse` cannot predict an exit-15 outcome. To know whether verify will pass, either run it manually (`forktrust exec my-task -- go test ./...`) or run real `forktrust finish` (no `--dry-run`).
+
+### When verify fails
+
+JSON output has the full diagnosis:
+
+```json
+{
+  "verify_configured": true,
+  "verify_ran": true,
+  "verify_passed": false,
+  "verify_ran_commands": ["go build ./...", "go test ./..."],
+  "verify_failed_command": "go test ./...",
+  "verify_output": "... (truncated)\n--- FAIL: TestX\n  ..."
+}
+```
+
+Plus exit code 15. The worktree is intact — the user can fix the underlying problem and re-run `forktrust finish` to retry.
+
+### Threat addressed
+
+Without a verify gate, an AI agent could:
+- Skip running tests, ship a broken merge.
+- Accidentally introduce a regression that no one notices until next deploy.
+- Make changes that build locally but fail in CI (different toolchain).
+
+With it, every `finish` is a contract: the merge happened only after the commands the user defined succeeded.
+
+## 7. `.env.local` ownership rules
 
 forktrust is the only file it owns. Detection: BOTH conditions must hold for forktrust to consider a `.env.local` "ours":
 
@@ -178,7 +260,7 @@ If you author `.env.local` and want to keep using it across worktrees:
 - Put it in `.forktrustconfig` as a `copy` hook, OR
 - Disable port allocation (don't set `[ports]`) and forktrust won't touch it at all.
 
-## 7. Path safety in hooks
+## 8. Path safety in hooks
 
 All paths in `copy` / `symlink` hooks go through `pathsafe.SafeJoin` which:
 
@@ -195,7 +277,7 @@ Plus one for `symlink` specifically: refuses to replace an existing regular file
 
 Tested with regression cases for each guard. See `internal/pathsafe/pathsafe_test.go`, `internal/hooks/`, and `internal/git/worktree_test.go`.
 
-## 8. Trust gate
+## 9. Trust gate
 
 `command` hooks REFUSE to run until the user explicitly trusts `.forktrustconfig`:
 
