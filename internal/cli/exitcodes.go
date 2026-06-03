@@ -19,6 +19,7 @@ const (
 	ExitBranchNotDeleted  = 13 // rm: worktree removed and ports released, but `git branch -D` failed (branch lingers)
 	ExitIgnoredFiles      = 14 // rm/finish refused: worktree has ignored files that would be silently lost (use --force to skip)
 	ExitVerifyFailed      = 15 // finish refused: a [verify].commands entry exited non-zero, or require_clean is set and the worktree is dirty after verify
+	ExitScopeViolation    = 16 // finish/scope-check refused: the worktree's diff touches files outside the declared scope (change contract violation)
 )
 
 // CodedError carries a structured exit code through cobra's error path.

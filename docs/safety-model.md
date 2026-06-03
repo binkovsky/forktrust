@@ -2,7 +2,7 @@
 
 This document is the authoritative description of forktrust's safety guarantees. If you're an AI agent reasoning about whether an operation is safe, read this first.
 
-There are six named guarantees:
+There are seven named guarantees:
 
 1. [Pre-flight refusal](#1-pre-flight-refusal)
 2. [Dry-run parity](#2-dry-run-parity)
@@ -10,12 +10,13 @@ There are six named guarantees:
 4. [Refuse-on-conflict](#4-refuse-on-conflict)
 5. [Refuse-on-ignored-loss](#5-refuse-on-ignored-loss)
 6. [Verify gate](#6-verify-gate)
+7. [Scope gate (change contract)](#7-scope-gate)
 
 Plus three structural protections:
 
-7. [`.env.local` ownership rules](#7-envlocal-ownership-rules)
-8. [Path safety in hooks](#8-path-safety-in-hooks)
-9. [Trust gate](#9-trust-gate)
+8. [`.env.local` ownership rules](#8-envlocal-ownership-rules)
+9. [Path safety in hooks](#9-path-safety-in-hooks)
+10. [Trust gate](#10-trust-gate)
 
 ## 1. Pre-flight refusal
 
@@ -239,7 +240,78 @@ Without a verify gate, an AI agent could:
 
 With it, every `finish` is a contract: the merge happened only after the commands the user defined succeeded.
 
-## 7. `.env.local` ownership rules
+## 7. Scope gate
+
+**Guarantee:** when a worktree has a scope file (`<repo>/.forktrust/scopes/<slug>.toml`), `forktrust finish` will refuse to merge if the diff vs the cascade target touches any file that does NOT match an `allowed` glob.
+
+This is the "change contract" feature: agents declare upfront what they may modify; the gate catches scope creep before merge. See [docs/scope.md](./scope.md) for the full guide.
+
+### Where in the pipeline
+
+Scope runs in the `finish` pre-flight phase — AFTER verify, BEFORE the WIP commit and merge. If scope fails, **no git mutation happened**: no commit, no merge, no push.
+
+Pre-flight order (refusals only):
+1. aheadKnown → exit 12
+2. ignored files → exit 14
+3. wrong main branch → exit 10
+4. dirty main → exit 3
+5. verify → exit 15
+6. **scope** → exit 16
+
+### Storage
+
+The scope file lives at `<repo>/.forktrust/scopes/<slug>.toml`. It is created by `forktrust new --scope` and `forktrust scope --set`, removed by `forktrust finish` (success), `forktrust rm`, and `forktrust scope --clear`.
+
+### Matching
+
+The change set is computed as the union of:
+- `git diff --name-only <aheadRef>...HEAD` (committed-ahead)
+- `git diff --name-only HEAD` (uncommitted)
+- `git ls-files --others --exclude-standard` (untracked, NOT ignored)
+
+Each path is matched against the `allowed` globs with doublestar v4 semantics. A file is in-scope IFF it matches AT LEAST ONE glob.
+
+### Dry-run
+
+Unlike verify, scope IS evaluated in dry-run — it's a pure read (no commands run, no files written). `forktrust finish --dry-run --json` accurately predicts exit 16:
+
+```json
+{
+  "scope_configured": true,
+  "scope_checked": true,
+  "scope_passed": false,
+  "scope_violations": ["package-lock.json"],
+  "scope_violation_count": 1,
+  "would_refuse": "scope gate failed: 1 file(s) outside declared --scope (exit 16). ..."
+}
+```
+
+This means scope is the one gate where dry-run is a perfect agent reconnaissance tool.
+
+### Bypass: `--no-scope`
+
+```bash
+forktrust finish my-task --no-scope
+```
+
+Prints a stderr WARNING listing the allowed globs. Sets `no_scope: true` in JSON. The merge proceeds even if the diff is out-of-scope.
+
+Documented as "only when you have manually reviewed the diff." Agents must never `--no-scope` without explicit user consent — the gate exists to catch scope creep.
+
+### Threat addressed
+
+Without scope contracts, an AI agent can edit files that weren't asked for. Common failure modes:
+- "Fix the login bug" task ends up touching `package-lock.json`, `Makefile`, and three random refactors.
+- Agent rewrites adjacent code "while I'm here," introducing untested regressions.
+- Scope creep slips into the merge commit, untraceable to a specific decision.
+
+With scope:
+- The allowed surface is declared upfront.
+- `finish` is a contract: "I only touched what I said I would."
+- Out-of-scope edits surface BEFORE merge, with the full file list.
+- The bypass (`--no-scope`) is loud (stderr warning) and traceable (JSON `no_scope: true`).
+
+## 8. `.env.local` ownership rules
 
 forktrust is the only file it owns. Detection: BOTH conditions must hold for forktrust to consider a `.env.local` "ours":
 
@@ -260,7 +332,7 @@ If you author `.env.local` and want to keep using it across worktrees:
 - Put it in `.forktrustconfig` as a `copy` hook, OR
 - Disable port allocation (don't set `[ports]`) and forktrust won't touch it at all.
 
-## 8. Path safety in hooks
+## 9. Path safety in hooks
 
 All paths in `copy` / `symlink` hooks go through `pathsafe.SafeJoin` which:
 
@@ -277,7 +349,7 @@ Plus one for `symlink` specifically: refuses to replace an existing regular file
 
 Tested with regression cases for each guard. See `internal/pathsafe/pathsafe_test.go`, `internal/hooks/`, and `internal/git/worktree_test.go`.
 
-## 9. Trust gate
+## 10. Trust gate
 
 `command` hooks REFUSE to run until the user explicitly trusts `.forktrustconfig`:
 

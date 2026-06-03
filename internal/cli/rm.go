@@ -11,6 +11,7 @@ import (
 	"github.com/binkovsky/forktrust/internal/config"
 	"github.com/binkovsky/forktrust/internal/git"
 	"github.com/binkovsky/forktrust/internal/ports"
+	"github.com/binkovsky/forktrust/internal/scope"
 )
 
 var (
@@ -234,6 +235,9 @@ func runRm(_ *cobra.Command, args []string) error {
 	if storePath, perr := ports.DefaultPath(); perr == nil {
 		_ = ports.Release(storePath, proj.Path, slug)
 	}
+	// Clean up the scope file (no-op if none) so re-running `forktrust new`
+	// with the same slug does not inherit a stale change-contract.
+	_ = scope.Remove(proj.Path, slug)
 
 	// Only delete the local branch if either:
 	//   - PROVABLY clean (no dirty AND no unpushed commits AND we KNOW the

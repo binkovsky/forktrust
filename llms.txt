@@ -14,7 +14,8 @@ The canonical reference lives in `docs/`. Each file is a complete chapter; toget
 - [docs/config.md](https://github.com/binkovsky/forktrust/blob/main/docs/config.md): `.forktrustconfig` reference — `[ports]`, `[[hooks.post_create]]`, trust gate
 - [docs/exit-codes.md](https://github.com/binkovsky/forktrust/blob/main/docs/exit-codes.md): all 14 exit codes with cause, remedy, and agent action
 - [docs/json-schema.md](https://github.com/binkovsky/forktrust/blob/main/docs/json-schema.md): every JSON output schema with field types and stability rules
-- [docs/safety-model.md](https://github.com/binkovsky/forktrust/blob/main/docs/safety-model.md): pre-flight refusal, dry-run parity, never-lose-WIP, refuse-on-conflict, refuse-on-ignored-loss, `.env.local` ownership, trust gate, path safety
+- [docs/safety-model.md](https://github.com/binkovsky/forktrust/blob/main/docs/safety-model.md): pre-flight refusal, dry-run parity, never-lose-WIP, refuse-on-conflict, refuse-on-ignored-loss, verify gate, scope gate, `.env.local` ownership, trust gate, path safety
+- [docs/scope.md](https://github.com/binkovsky/forktrust/blob/main/docs/scope.md): change contracts — declare which file globs a task may modify; `finish` refuses out-of-scope edits
 - [docs/workflows.md](https://github.com/binkovsky/forktrust/blob/main/docs/workflows.md): canonical patterns — parallel tasks, dirty main, abandon-and-restore, multi-repo, CI
 - [docs/troubleshooting.md](https://github.com/binkovsky/forktrust/blob/main/docs/troubleshooting.md): every error message and exit code mapped to a fix
 - [docs/ai-integration.md](https://github.com/binkovsky/forktrust/blob/main/docs/ai-integration.md): Claude Code, Cursor, Aider, Codex recipes; future MCP server design
@@ -40,14 +41,15 @@ Abandon (snapshots WIP first):
 forktrust rm <slug>                        # → wip/<branch>-YYYYMMDD-HHMMSS-<sha7>
 ```
 
-## Six hard guarantees
+## Seven hard guarantees
 
 1. **Pre-flight refusal** — non-zero exit ⇒ no git mutation happened.
-2. **Dry-run parity** — `--dry-run --json`'s `would_refuse` exactly matches real-command behavior (exception: verify is not executed in dry-run).
+2. **Dry-run parity** — `--dry-run --json`'s `would_refuse` exactly matches real-command behavior (exception: verify is not executed in dry-run; scope IS).
 3. **Never-lose-WIP** — `rm` pushes to `wip/<branch>-YYYYMMDD-HHMMSS-<sha7>` before removing.
 4. **Refuse-on-conflict** — `finish` aborts merge on conflict (exit 2). Never `--strategy`.
 5. **Refuse-on-ignored-loss** — exit 14 if `git worktree remove` would silently delete ignored files.
 6. **Verify gate** — `[verify]` section in `.forktrustconfig` declares commands that must exit zero before `finish` may merge. Exit 15 on failure. Bypass: `finish --no-verify` (warned).
+7. **Scope gate (change contract)** — per-worktree scope file (`forktrust new --scope "globs"` or `forktrust scope --set`) limits which files the task may modify. Exit 16 if the diff is out-of-scope. Bypass: `finish --no-scope` (warned).
 
 `.env.local` is treated as forktrust-managed only if (a) regular file at worktree root, (b) starts with the exact `# Managed by forktrust...` header.
 
@@ -70,6 +72,7 @@ forktrust rm <slug>                        # → wip/<branch>-YYYYMMDD-HHMMSS-<s
 | 13 | rm/finish: worktree removed but branch -D failed |
 | 14 | rm/finish refused: ignored files in worktree would be permanently deleted |
 | 15 | finish refused: [verify] gate failed (command non-zero or require_clean post-verify dirty) |
+| 16 | finish/scope-check refused: worktree diff touches files outside declared --scope contract |
 
 Full action table: [docs/exit-codes.md](https://github.com/binkovsky/forktrust/blob/main/docs/exit-codes.md).
 

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/binkovsky/forktrust/internal/pathsafe"
 	"github.com/binkovsky/forktrust/internal/ports"
 	"github.com/binkovsky/forktrust/internal/predict"
+	"github.com/binkovsky/forktrust/internal/scope"
 )
 
 var (
@@ -23,6 +25,7 @@ var (
 	newJSON    bool
 	newNoHooks bool
 	newFrom    string
+	newScope   string
 )
 
 var newCmd = &cobra.Command{
@@ -50,6 +53,7 @@ func init() {
 	newCmd.Flags().BoolVar(&newJSON, "json", false, "emit a structured JSON result on stdout (one object)")
 	newCmd.Flags().BoolVar(&newNoHooks, "no-hooks", false, "skip command hooks (copy/symlink still run); also skips the trust gate")
 	newCmd.Flags().StringVar(&newFrom, "from", "", "explicit base ref for the new branch (default cascade: origin/<mainBranch> > <mainBranch> > HEAD); pass a non-empty ref or omit")
+	newCmd.Flags().StringVar(&newScope, "scope", "", "comma-separated glob patterns the task is allowed to modify (e.g. \"internal/auth/**, cmd/api/**\"). finish will refuse to merge changes outside these paths.")
 }
 
 // rejectEmptyFrom catches the script footgun where `--from "$VAR"` becomes
@@ -296,6 +300,29 @@ func runNew(cmd *cobra.Command, args []string) error {
 		}
 		for _, o := range overlaps {
 			r.PredictedOverlaps = append(r.PredictedOverlaps, o.File)
+		}
+	}
+
+	// Persist change-contract scope (v0.7.3) if user passed --scope.
+	// We do this after worktree creation so the scope is tied to a concrete
+	// slug; on failure we'd rather have the worktree without scope than block
+	// task setup. Scope is enforced at finish; absence = no restrictions.
+	if newScope != "" {
+		globs := scope.ParseCSV(newScope)
+		s := &scope.Scope{
+			Allowed:   globs,
+			CreatedBy: "forktrust new " + slug + " --scope " + newScope,
+			CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+		if err := scope.Save(proj.Path, slug, s); err != nil {
+			return fmt.Errorf("save scope: %w", err)
+		}
+		r.Scope = globs
+		if !newJSON {
+			fmt.Printf("==> scope: %d glob(s) — finish will refuse out-of-scope edits\n", len(globs))
+			for _, g := range globs {
+				fmt.Printf("    - %s\n", g)
+			}
 		}
 	}
 

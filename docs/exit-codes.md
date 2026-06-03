@@ -24,6 +24,7 @@ Codes are stable across releases. New codes are added at the high end; existing 
 | 13 | rm/finish: worktree removed and ports released, but `git branch -D` failed |
 | 14 | rm/finish: worktree has ignored files that would be permanently deleted |
 | 15 | finish: `[verify]` gate failed (command non-zero, or `require_clean` worktree dirty) |
+| 16 | finish/scope-check: diff touches files outside the declared `--scope` contract |
 
 ## Full catalog
 
@@ -208,6 +209,23 @@ git -C <main-repo> branch -D <branch>
 
 ---
 
+### `16` — scope contract violated
+
+`finish` (or `forktrust scope <slug> --check`) computed the diff vs the cascade target and found one or more changed files that do NOT match any glob in the worktree's declared scope (`<repo>/.forktrust/scopes/<slug>.toml`).
+
+**No git mutation happened.** Pre-flight refusal — no WIP commit, no merge, no push.
+
+**JSON consumers:** `scope_passed: false`, `scope_violation_count: N`, `scope_violations: [...]` (truncated to first 100; full count in `scope_violation_count`), `scope_allowed: [...]` (the declared globs).
+
+**User:** three options:
+1. **Revert the out-of-scope changes** (the most honest path): `cd <worktree> && git checkout HEAD -- <file>` for each.
+2. **Widen the scope** if the change is genuinely needed: `forktrust scope <slug> --set "internal/auth/**, the/new/path/**"`.
+3. **Bypass after manual review**: `forktrust finish <slug> --no-scope` (prints stderr warning, sets `no_scope: true` in JSON).
+
+**Agent:** STOP. Surface the file list to the user. NEVER `--no-scope` without explicit user consent — the entire point of the gate is to catch scope creep.
+
+---
+
 ### `15` — `[verify]` gate failed
 
 `finish` ran the `[verify]` commands declared in `.forktrustconfig` and either:
@@ -263,6 +281,7 @@ exit code
 ├── 13     → tell user branch lingers; work is safe
 ├── 14     → list ignored files; ask user; never --force
 ├── 15     → surface verify_failed_command + tail of verify_output; ask user; never --no-verify
+├── 16     → surface scope_violations list to user; ask user; never --no-scope
 └── other  → surface raw error
 ```
 

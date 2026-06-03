@@ -11,7 +11,8 @@ Start here if you are a human using forktrust day-to-day:
 - **[Getting started](./getting-started.md)** — install, register your first repo, create + finish your first worktree (5-minute walkthrough).
 - **[Workflows](./workflows.md)** — canonical patterns: parallel tasks, dirty main, abandoning work, multi-repo sessions, CI scripting.
 - **[Commands reference](./commands.md)** — every command, every flag, every behavior, with examples.
-- **[.forktrustconfig reference](./config.md)** — per-repo TOML config: hooks, ports, future verify/scope sections.
+- **[.forktrustconfig reference](./config.md)** — per-repo TOML config: hooks, ports, verify gate.
+- **[Change contracts (`--scope`)](./scope.md)** — declare which files a task is allowed to touch; `finish` refuses out-of-scope edits.
 - **[Shell integration](./shell-integration.md)** — `ft` function, `forktrust shell`, prompt integration, autocomplete.
 - **[Troubleshooting](./troubleshooting.md)** — every error message and exit code mapped to a fix.
 
@@ -47,6 +48,7 @@ If you are an AI coding agent (Claude Code, Cursor, Aider, Codex, etc.), read th
 | **hook** | An entry in `[[hooks.post_create]]` that fires after `forktrust new`. Three types: `copy`, `symlink`, `command`. |
 | **trust gate** | Approval mechanism for `command` hooks: SHA-pinned `.forktrustconfig`. Any edit auto-revokes trust until `forktrust trust` is re-run. |
 | **verify gate** | `[verify]` section in `.forktrustconfig` declaring commands that MUST exit zero before `finish` may merge. Refusal = exit 15 in the finish pre-flight. Skipped via `--no-verify` (with warning). |
+| **scope gate** | Per-worktree change contract at `<repo>/.forktrust/scopes/<slug>.toml` declaring which glob patterns the task may modify. Refusal = exit 16 in the finish pre-flight. Skipped via `--no-scope` (with warning). |
 | **port block** | Aligned range (e.g. `3000-3009`, `3010-3019`) reserved per-slug and written into `.env.local`. Auto-released on `finish` / `rm`. |
 | **ManagedHeader** | Exact first line forktrust writes into every `.env.local`: `# Managed by forktrust. Do not edit; values are overwritten on each `forktrust new`.\n`. Used as ownership proof. |
 

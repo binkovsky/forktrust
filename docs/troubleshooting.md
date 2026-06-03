@@ -24,6 +24,7 @@ For the full catalog see [exit-codes.md](./exit-codes.md). Quick fixes:
 | 13 | `git worktree list`; find what's checked out, then `git branch -D` manually |
 | 14 | Move ignored files out, or `--force` (rm only) |
 | 15 | Fix the failing verify command, or `--no-verify` on `finish` (with explicit consent) |
+| 16 | Revert out-of-scope edits, widen scope (`forktrust scope <slug> --set "..."`), or `--no-scope` (with explicit consent) |
 
 ## By stderr message
 
@@ -61,6 +62,29 @@ cd <worktree> && git push origin HEAD:refs/heads/wip/<branch>-<stamp>-<sha7>
 ```
 
 Then re-run `forktrust rm <slug>`. **DO NOT use `--force`** — that drops the WIP.
+
+### `REFUSE: scope gate failed — N file(s) outside the declared --scope:`
+
+`finish` exit 16. Stderr lists the violating files and the allowed globs. JSON has `scope_violations` (truncated to 100) and `scope_violation_count` (full count).
+
+Fix options:
+
+1. **Revert the out-of-scope files** (the honest path):
+   ```bash
+   cd $(forktrust cd <slug>)
+   git checkout HEAD -- path/that/should/not/have/changed
+   ```
+2. **Widen the scope** if the change is genuinely needed:
+   ```bash
+   forktrust scope <slug> --set "internal/auth/**, the/new/path/**"
+   forktrust finish <slug>
+   ```
+3. **Bypass after manual review**:
+   ```bash
+   forktrust finish <slug> --no-scope
+   ```
+
+Use `forktrust scope <slug> --check --json` to evaluate the current diff without running `finish`.
 
 ### `REFUSE: [verify] gate failed.`
 

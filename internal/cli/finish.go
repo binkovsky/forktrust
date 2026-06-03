@@ -11,6 +11,7 @@ import (
 	"github.com/binkovsky/forktrust/internal/config"
 	"github.com/binkovsky/forktrust/internal/git"
 	"github.com/binkovsky/forktrust/internal/ports"
+	"github.com/binkovsky/forktrust/internal/scope"
 )
 
 var (
@@ -19,6 +20,7 @@ var (
 	finishDryRun   bool
 	finishJSON     bool
 	finishNoVerify bool
+	finishNoScope  bool
 )
 
 var finishCmd = &cobra.Command{
@@ -50,7 +52,8 @@ Exit codes:
   12  could not determine ahead count (no main reference resolved)
   13  worktree removed but git branch -D failed (branch lingers)
   14  worktree has ignored files that would be permanently deleted
-  15  verify gate failed: a [verify].commands entry exited non-zero, or require_clean is set and the worktree is dirty after verify`,
+  15  verify gate failed: a [verify].commands entry exited non-zero, or require_clean is set and the worktree is dirty after verify
+  16  scope gate failed: the worktree diff touches files outside the declared --scope contract`,
 	Args: cobra.ExactArgs(1),
 	RunE: runFinish,
 }
@@ -61,6 +64,7 @@ func init() {
 	finishCmd.Flags().BoolVar(&finishDryRun, "dry-run", false, "print the plan without executing anything")
 	finishCmd.Flags().BoolVar(&finishJSON, "json", false, "emit a structured JSON result on stdout (one object)")
 	finishCmd.Flags().BoolVar(&finishNoVerify, "no-verify", false, "skip the [verify] gate (prints a warning); only use when you really know what you're doing")
+	finishCmd.Flags().BoolVar(&finishNoScope, "no-scope", false, "skip the change-contract scope check (prints a warning); use when you have manually reviewed out-of-scope edits")
 }
 
 func runFinish(_ *cobra.Command, args []string) error {
@@ -199,7 +203,49 @@ func runFinish(_ *cobra.Command, args []string) error {
 		}
 	}
 
-	// 2e. NOW it's safe to commit uncommitted WIP on the worktree branch.
+	// 2e. Scope (change contract) gate. Runs against the diff vs aheadRef.
+	// Skipped under --no-scope (with stderr warning) or when no scope file exists.
+	scopeR, scopeErr := evalScope(proj.Path, wtPath, slug, aheadRef)
+	if scopeErr != nil {
+		return scopeErr
+	}
+	r.ScopeConfigured = scopeR.Configured
+	r.ScopeAllowed = scopeR.Allowed
+	if finishNoScope {
+		r.NoScope = true
+		if scopeR.Configured {
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, "WARNING: --no-scope SKIPPED the change-contract check. The merge will land even though the diff may touch files outside the declared scope:")
+			for _, g := range scopeR.Allowed {
+				fmt.Fprintf(os.Stderr, "  allowed: %s\n", g)
+			}
+			fmt.Fprintln(os.Stderr, "Only use --no-scope when you have already reviewed the diff manually.")
+		}
+	} else if scopeR.Configured {
+		r.ScopeChecked = true
+		r.ScopePassed = scopeR.Passed
+		r.ScopeViolationCount = scopeR.ViolationCount
+		r.ScopeViolations = truncateStrings(scopeR.Violations, 100)
+		if !scopeR.Passed {
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintf(os.Stderr, "REFUSE: scope gate failed — %d file(s) outside the declared --scope:\n", scopeR.ViolationCount)
+			for _, v := range r.ScopeViolations {
+				fmt.Fprintf(os.Stderr, "  - %s\n", v)
+			}
+			if scopeR.ViolationCount > len(r.ScopeViolations) {
+				fmt.Fprintf(os.Stderr, "  ... and %d more (see JSON output for full list)\n", scopeR.ViolationCount-len(r.ScopeViolations))
+			}
+			fmt.Fprintln(os.Stderr, "Allowed globs:")
+			for _, g := range scopeR.Allowed {
+				fmt.Fprintf(os.Stderr, "  + %s\n", g)
+			}
+			fmt.Fprintln(os.Stderr, "Either widen the scope (forktrust scope " + slug + " --set \"...\"), revert the out-of-scope changes, or pass --no-scope to bypass (not recommended).")
+			_ = emitFinish(r)
+			return coded(ExitScopeViolation, fmt.Errorf("scope gate failed: %d file(s) outside declared contract", scopeR.ViolationCount))
+		}
+	}
+
+	// 2f. NOW it's safe to commit uncommitted WIP on the worktree branch.
 	if dirty > 0 {
 		msg := finishMessage
 		if msg == "" {
@@ -233,6 +279,7 @@ func runFinish(_ *cobra.Command, args []string) error {
 		if storePath, perr := ports.DefaultPath(); perr == nil {
 			_ = ports.Release(storePath, proj.Path, slug)
 		}
+		_ = scope.Remove(proj.Path, slug)
 		if _, err := git.Run(proj.Path, "branch", "-D", branch); err == nil {
 			r.BranchDeleted = true
 		} else {
@@ -292,6 +339,9 @@ func runFinish(_ *cobra.Command, args []string) error {
 	if storePath, perr := ports.DefaultPath(); perr == nil {
 		_ = ports.Release(storePath, proj.Path, slug)
 	}
+	// Clean up the scope file (no-op if none) so a future `forktrust new`
+	// with the same slug starts from a clean state.
+	_ = scope.Remove(proj.Path, slug)
 
 	// 9. Delete the local branch. R5 fix: surface failures with exit 13
 	// (same shape as rm) — merge/push/remove already succeeded, but a
@@ -358,9 +408,27 @@ func previewFinish(r finishResult, mainBranch, mainPath string) error {
 		r.NoVerify = true
 	}
 
+	// Scope eval in dry-run: this is a pure read (git diff + glob match),
+	// so we DO execute it. Predicts exit 16 accurately.
+	if aheadKnown && !finishNoScope {
+		scopeR, _ := evalScope(mainPath, r.WorktreePath, r.Slug, aheadRef)
+		r.ScopeConfigured = scopeR.Configured
+		r.ScopeAllowed = scopeR.Allowed
+		if scopeR.Configured {
+			r.ScopeChecked = true
+			r.ScopePassed = scopeR.Passed
+			r.ScopeViolationCount = scopeR.ViolationCount
+			r.ScopeViolations = truncateStrings(scopeR.Violations, 100)
+		}
+	} else if finishNoScope {
+		r.NoScope = true
+	}
+
 	// Mirror runFinish refusal order exactly — dry-run must agree with real finish.
 	// Real finish order: (1) no main ref → exit 12; (2) ignored files → exit 14;
-	// (3) wrong branch → exit 10; (4) dirty main → exit 3; (5) verify → exit 15 (not predicted).
+	// (3) wrong branch → exit 10; (4) dirty main → exit 3;
+	// (5) verify → exit 15 (NOT predicted; verify has side effects);
+	// (6) scope → exit 16 (predicted; pure diff + glob match).
 	switch {
 	case !aheadKnown:
 		r.WouldRefuse = fmt.Sprintf("no main reference resolved (exit %d). Push origin/%s or create local %s first.", ExitAheadUnknown, mainBranch, mainBranch)
@@ -370,6 +438,8 @@ func previewFinish(r finishResult, mainBranch, mainPath string) error {
 		r.WouldRefuse = fmt.Sprintf("main checkout on %q, expected %q (exit %d)", current, mainBranch, ExitMainOnWrongBranch)
 	case mainDirty > 0:
 		r.WouldRefuse = fmt.Sprintf("main checkout is dirty (%d uncommitted file(s)) (exit %d)", mainDirty, ExitDirtyMain)
+	case r.ScopeConfigured && !r.ScopePassed && !finishNoScope:
+		r.WouldRefuse = fmt.Sprintf("scope gate failed: %d file(s) outside declared --scope (exit %d). Widen scope, revert out-of-scope edits, or pass --no-scope to bypass.", r.ScopeViolationCount, ExitScopeViolation)
 	}
 
 	if finishJSON {

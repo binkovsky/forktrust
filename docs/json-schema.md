@@ -175,6 +175,13 @@ Stderr stays human-readable. Always route stderr to a separate stream when pipin
 | `verify_failed_command` | string | The command that failed verify; empty if verify passed or was skipped |
 | `verify_output` | string | Tail (~8 KiB) of the failing command's combined stdout+stderr; empty if verify passed or was skipped |
 | `no_verify` | bool | True when `--no-verify` bypassed the gate |
+| `scope_configured` | bool | True if `<repo>/.forktrust/scopes/<slug>.toml` exists |
+| `scope_checked` | bool | True if the gate was evaluated (false on `--no-scope` or no scope file) |
+| `scope_passed` | bool | True if every changed file matched at least one allowed glob |
+| `scope_allowed` | string[] | The declared allowed globs (mirror of the file) |
+| `scope_violations` | string[] | Up to 100 violating files; full count in `scope_violation_count` |
+| `scope_violation_count` | int | Full violation count, even if `scope_violations` is truncated |
+| `no_scope` | bool | True when `--no-scope` bypassed the gate |
 | `merged` | bool | True if merge step completed |
 | `pushed` | bool | True if push to origin completed |
 | `worktree_removed` | bool | True if worktree dir was removed |
@@ -192,6 +199,8 @@ The check order in `would_refuse` exactly matches `runFinish`:
 4. `mainDirty > 0` → exit 3
 
 Verify (exit 15) is NOT predicted by `would_refuse` — dry-run does not execute verify commands (they have side effects). Use `verify_configured` + `verify_ran_commands` to know what real `finish` will run.
+
+Scope (exit 16) IS predicted by `would_refuse` — scope evaluation is a pure read (`git diff` + glob match) with no side effects, so dry-run runs it.
 
 ## `forktrust rm --json`
 

@@ -76,6 +76,11 @@ copy of the codebase so concurrent agents do not step on each other.
   run tests / linters / builds. ` + "`--no-verify`" + ` bypasses with a stderr warning,
   but agents must NOT use it without explicit user consent — the gate exists
   to prevent shipping broken code.
+- **Scope gate (change contract):** declare allowed paths upfront with
+  ` + "`forktrust new <slug> --scope \"globs\"`" + ` (or ` + "`forktrust scope <slug> --set ...`" + `).
+  ` + "`finish`" + ` REFUSES (exit 16) if the diff touches files outside the declared
+  globs. JSON shows ` + "`scope_violations`" + ` (list) and ` + "`scope_violation_count`" + `.
+  ` + "`--no-scope`" + ` bypass with warning; agents must NOT bypass without consent.
 
 ### Machine-readable output
 
@@ -108,6 +113,7 @@ Exit codes are stable across releases. Switch on them, not on stderr text:
 | 13 | rm/finish: worktree removed but ` + "`git branch -D`" + ` failed (branch lingers) | tell user the branch is still around |
 | 14 | worktree has ignored files that would be lost | tell user to move them out, or pass ` + "`--force`" + ` |
 | 15 | [verify] gate failed (test/lint/build command returned non-zero) | surface ` + "`verify_failed_command`" + ` + tail of ` + "`verify_output`" + ` to user; NEVER ` + "`--no-verify`" + ` without consent |
+| 16 | scope contract violated (diff touches files outside declared --scope) | surface ` + "`scope_violations`" + ` to user; NEVER ` + "`--no-scope`" + ` without consent |
 
 ### Inspecting state
 
@@ -149,6 +155,7 @@ spawn a subshell inside the worktree (with ` + "`FORKTRUST_SLUG`" + ` exported).
 | ` + "`forktrust finish <slug>`" + ` | Merge to main, push, cleanup (refuses on conflict) |
 | ` + "`forktrust rm <slug>`" + ` | Abandon, pushing WIP to ` + "`wip/*`" + ` first |
 | ` + "`forktrust ai <slug>`" + ` | Launch configured AI tool in the worktree |
+| ` + "`forktrust scope <slug>`" + ` | Show / set / clear / check change-contract scope |
 | ` + "`forktrust trust`" + ` | Approve this repo's ` + "`.forktrustconfig`" + ` command hooks |
 | ` + "`forktrust doctor`" + ` | Health check (origin, main ref, hooks, ports) |
 

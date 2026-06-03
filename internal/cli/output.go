@@ -37,6 +37,21 @@ type finishResult struct {
 	VerifyFailedCommand string   `json:"verify_failed_command,omitempty"`
 	VerifyOutput        string   `json:"verify_output,omitempty"` // tail of failing command's combined stdout+stderr (capped)
 	NoVerify            bool     `json:"no_verify,omitempty"`     // true when --no-verify bypassed the gate
+	// Scope gate (v0.7.3). Same shape contract as verify:
+	//   - ScopeConfigured: the worktree has a .forktrust/scopes/<slug>.toml
+	//   - ScopeChecked: scope was evaluated (false on --no-scope, dry-run, or no scope file)
+	//   - ScopePassed: every changed file matches at least one allowed glob
+	//   - ScopeAllowed: the declared allowed globs (mirror of the file, for inspection)
+	//   - ScopeViolations: list of changed files NOT matching any allowed glob (truncated for JSON: see ScopeViolationCount)
+	//   - ScopeViolationCount: full count even if ScopeViolations is truncated
+	//   - NoScope: --no-scope bypassed the gate
+	ScopeConfigured     bool     `json:"scope_configured"`
+	ScopeChecked        bool     `json:"scope_checked"`
+	ScopePassed         bool     `json:"scope_passed"`
+	ScopeAllowed        []string `json:"scope_allowed,omitempty"`
+	ScopeViolations     []string `json:"scope_violations,omitempty"`
+	ScopeViolationCount int      `json:"scope_violation_count,omitempty"`
+	NoScope             bool     `json:"no_scope,omitempty"`
 	Merged              bool     `json:"merged"`
 	Pushed              bool     `json:"pushed"`
 	WorktreeRemoved     bool     `json:"worktree_removed"`
@@ -75,6 +90,9 @@ type newResult struct {
 	HooksRun          []string `json:"hooks_run,omitempty"`
 	Ports             []int    `json:"ports,omitempty"`
 	PredictedOverlaps []string `json:"predicted_overlaps,omitempty"`
+	// Scope (v0.7.3): the allowed-globs change contract this task was created
+	// with, if any. Stored at <repo>/.forktrust/scopes/<slug>.toml.
+	Scope []string `json:"scope,omitempty"`
 }
 
 // listResult is the stable JSON schema for `forktrust list [--json]`.

@@ -16,7 +16,7 @@ All commands return one of the documented [exit codes](./exit-codes.md).
 Create an isolated worktree on a fresh branch.
 
 ```
-forktrust new <slug> [--from <ref>] [--install] [--no-hooks] [--project <name>] [--json]
+forktrust new <slug> [--from <ref>] [--scope "globs"] [--install] [--no-hooks] [--project <name>] [--json]
 ```
 
 What happens:
@@ -32,6 +32,7 @@ Flags:
 - `--from <ref>` — explicit base ref. Useful for forking off a feature branch or a specific commit. Empty string is rejected.
 - `--install` — run the configured install command (legacy; prefer `[[hooks.post_create]] type="command"` in `.forktrustconfig`).
 - `--no-hooks` — skip command hooks (copy/symlink still run; trust gate also skipped). Useful when an agent should not execute arbitrary scripts.
+- `--scope "globs"` — declare the change contract for this task: a comma-separated list of glob patterns. `finish` will refuse (exit 16) if the diff touches files outside these globs. See [scope.md](./scope.md). Example: `--scope "internal/auth/**, go.mod"`.
 
 Example:
 
@@ -113,7 +114,7 @@ myapp    add-search    fork/add-search       0      1       0  3010-3019   4h
 The canonical "ship it" command: commit + merge + push + cleanup.
 
 ```
-forktrust finish <slug> [--message "<text>"] [--no-verify] [--dry-run] [--project <name>] [--json]
+forktrust finish <slug> [--message "<text>"] [--no-verify] [--no-scope] [--dry-run] [--project <name>] [--json]
 ```
 
 Pipeline (all pre-flight checks happen BEFORE any mutation):
@@ -124,6 +125,7 @@ Pipeline (all pre-flight checks happen BEFORE any mutation):
    - Main checkout on wrong branch → exit 10.
    - Main checkout dirty → exit 3.
    - `[verify]` commands (if configured, unless `--no-verify`) → exit 15.
+   - Scope contract (if `<repo>/.forktrust/scopes/<slug>.toml` exists, unless `--no-scope`) → exit 16.
 2. Commit uncommitted WIP on the worktree branch (message: `--message` or `WIP: <slug>`).
 3. Compute commits-ahead. If 0 → fast-path: remove worktree + release ports + delete branch.
 4. Pull origin/main if origin is configured.
@@ -136,6 +138,7 @@ Pipeline (all pre-flight checks happen BEFORE any mutation):
 Flags:
 - `-m, --message <text>` — commit message for the auto-WIP commit. Default: `WIP: <slug>`.
 - `--no-verify` — skip the `[verify]` gate (prints a stderr WARNING listing the skipped commands). JSON: `no_verify: true`. Use only when you have already verified manually.
+- `--no-scope` — skip the change-contract scope check (prints a stderr WARNING listing the allowed globs). JSON: `no_scope: true`. Use only when you have already reviewed out-of-scope edits.
 - `--dry-run` — emit the would-refuse reason without executing. Exit 0; the JSON's `would_refuse` field tells you what (if anything) would have blocked. Note: dry-run does NOT execute verify commands (they would be a side effect); it reports `verify_configured` + `verify_ran_commands` so consumers know what the real command would do.
 
 Example success:
@@ -282,6 +285,52 @@ forktrust exec fix-payment -- npm test
 forktrust exec fix-payment -- git status
 forktrust exec fix-payment -- npm run dev -- --port 4000
 ```
+
+---
+
+## `forktrust scope <slug>`
+
+Manage the change-contract scope for a worktree. Shipped in v0.7.3. See [scope.md](./scope.md) for the full guide.
+
+```
+forktrust scope <slug> [--set "globs"] [--clear] [--check] [--project <name>] [--json]
+```
+
+Modes (mutually exclusive):
+
+- **No mode flag** — print the current scope (or `"no scope set"`).
+- `--set "a/**, b/**"` — replace the scope with this comma-separated glob list. Whitespace tolerated.
+- `--clear` — remove the scope file. Worktree becomes unrestricted.
+- `--check` — evaluate the worktree diff against the scope and exit 16 if any file is out-of-scope. Use this in CI or as a standalone check.
+
+Flag: `--json` for structured output.
+
+Examples:
+
+```bash
+# Inspect
+forktrust scope my-task
+forktrust scope my-task --json | jq .allowed
+
+# Set
+forktrust scope my-task --set "internal/auth/**, go.mod"
+
+# Re-check before finish
+forktrust scope my-task --check && forktrust finish my-task
+
+# Widen mid-flight if needed
+forktrust scope my-task --set "internal/auth/**, internal/session/**"
+
+# Remove (back to unrestricted)
+forktrust scope my-task --clear
+```
+
+Exit codes:
+- 0 — show/set/clear succeeded, or `--check` passed
+- 6 — no worktree matching slug
+- 7 — slug matches worktrees in multiple projects
+- 12 — `--check` could not resolve main ref to diff against
+- 16 — `--check` found out-of-scope edits
 
 ---
 
