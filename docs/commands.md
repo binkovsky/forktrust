@@ -288,6 +288,30 @@ forktrust exec fix-payment -- npm run dev -- --port 4000
 
 ---
 
+## `forktrust mcp`
+
+Run as a Model Context Protocol stdio server. Shipped in v0.7.6. See [mcp.md](./mcp.md) for the full guide.
+
+```
+forktrust mcp
+```
+
+Reads newline-delimited JSON-RPC 2.0 requests from stdin and writes responses to stdout. Designed to be spawned by an MCP client (Claude Code, Cursor, etc.), not invoked interactively.
+
+10 tools exposed: `forktrust_list`, `forktrust_status`, `forktrust_new`, `forktrust_cd`, `forktrust_finish`, `forktrust_rm`, `forktrust_scope`, `forktrust_pr`, `forktrust_pr_status`, `forktrust_doctor`.
+
+Configure in Claude Code's `settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "forktrust": {"command": "forktrust", "args": ["mcp"]}
+  }
+}
+```
+
+---
+
 ## `forktrust pr <slug>`
 
 Open a GitHub PR for the worktree's branch instead of merging locally. Shipped in v0.7.4. See [pr.md](./pr.md) for the full guide.

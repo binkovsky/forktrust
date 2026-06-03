@@ -165,6 +165,7 @@ spawn a subshell inside the worktree (with ` + "`FORKTRUST_SLUG`" + ` exported).
 | ` + "`forktrust scope <slug>`" + ` | Show / set / clear / check change-contract scope |
 | ` + "`forktrust pr <slug>`" + ` | Open a GitHub PR via ` + "`gh`" + ` instead of direct merge (worktree stays alive) |
 | ` + "`forktrust pr-status <slug>`" + ` | Show PR status: CI / approvals / mergeable |
+| ` + "`forktrust mcp`" + ` | Run as MCP stdio server (10 typed tools for Claude Code / Cursor) |
 | ` + "`forktrust trust`" + ` | Approve this repo's ` + "`.forktrustconfig`" + ` command hooks |
 | ` + "`forktrust doctor`" + ` | Health check (origin, main ref, hooks, ports) |
 

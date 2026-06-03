@@ -152,6 +152,7 @@ Any future edit to `.forktrustconfig` auto-revokes trust until you re-run `forkt
 | `forktrust scope <slug>` | Show / set / clear / check the change-contract scope for a worktree |
 | `forktrust pr <slug>` | Push branch + open GitHub PR (via `gh`) instead of direct merge |
 | `forktrust pr-status <slug>` | Show PR status (CI / approvals / mergeable) |
+| `forktrust mcp` | Run as a Model Context Protocol stdio server (10 typed tools) |
 | `forktrust doctor` | Health check (origin, main ref, hooks, ports, brew version) |
 | `forktrust trust [path]` | Approve `.forktrustconfig` command hooks for this repo |
 | `forktrust config add <path>` | Register a repo with forktrust |
@@ -234,9 +235,10 @@ Shipped in v0.7.1: `cd`, `shell`, `doctor`, pre-flight refusal model, dry-run pa
 Shipped in v0.7.2: **`[verify]` gate** — `finish` refuses to merge unless declared `commands` all exit zero; `--no-verify` bypass; exit 15.
 Shipped in v0.7.3: **Change contract (`--scope`)** — `forktrust new <slug> --scope "globs"` declares allowed paths; `finish` refuses out-of-scope edits (exit 16). New `forktrust scope <slug>` command (show / set / clear / check). `--no-scope` bypass.
 Shipped in v0.7.4: **PR mode** — `forktrust pr <slug>` opens a GitHub PR via `gh` instead of direct merge; `forktrust pr-status <slug>` reports CI / approvals / mergeable. Pre-flight reuse (verify + scope). New exit codes 17 (gh unavailable) + 18 (gh pr create failed).
+Shipped in v0.7.5: Adversarial-review hardening — Windows scope fix, verify ring buffer + timeout, autoTitleBody WIP skip, ghPRView state check, JSON envelope contract on all error paths, fetch-failure warning, pr ahead==0 guard, doctor coverage for verify/scope/gh-auth.
+Shipped in v0.7.6: **MCP server** — `forktrust mcp` runs as a Model Context Protocol stdio server; 10 typed tools (`forktrust_list`, `forktrust_new`, etc.) for Claude Code / Cursor / any MCP-speaking agent. JSON-RPC 2.0 + MCP 2024-11-05.
 
 Next versions — positioning forktrust as the "merge gate for AI agents":
-- **v0.7.5 MCP server**: `forktrust mcp` — native typed tools for Claude Code / Cursor
 - **v0.7.6 Summary validation**: agent must produce a summary; cross-checked against diff
 - **v0.7.7 Templates + policy packs**: `forktrust new --template nextjs`, `forktrust policy init strict-ai`
 - **v0.8.0 Intelligence**: `forktrust plan-merge` (risk scoring), audit ledger, `rollback-info`

@@ -14,6 +14,7 @@ Start here if you are a human using forktrust day-to-day:
 - **[.forktrustconfig reference](./config.md)** — per-repo TOML config: hooks, ports, verify gate.
 - **[Change contracts (`--scope`)](./scope.md)** — declare which files a task is allowed to touch; `finish` refuses out-of-scope edits.
 - **[PR mode (`forktrust pr`)](./pr.md)** — open a GitHub PR instead of merging locally; `pr-status` reports CI / approvals / mergeable.
+- **[MCP server (`forktrust mcp`)](./mcp.md)** — run as a Model Context Protocol stdio server so AI agents call forktrust as typed native tools.
 - **[Shell integration](./shell-integration.md)** — `ft` function, `forktrust shell`, prompt integration, autocomplete.
 - **[Troubleshooting](./troubleshooting.md)** — every error message and exit code mapped to a fix.
 

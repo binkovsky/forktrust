@@ -116,6 +116,7 @@ Then `ft <slug>` cd's into any worktree. See [docs/shell-integration.md](./docs/
 | Troubleshooting | [docs/troubleshooting.md](./docs/troubleshooting.md) |
 | Change contracts (`--scope`) | [docs/scope.md](./docs/scope.md) |
 | PR mode (`pr`, `pr-status`) | [docs/pr.md](./docs/pr.md) |
+| MCP server (`forktrust mcp`) | [docs/mcp.md](./docs/mcp.md) |
 | AI integration recipes | [docs/ai-integration.md](./docs/ai-integration.md) |
 | Shell integration | [docs/shell-integration.md](./docs/shell-integration.md) |
 

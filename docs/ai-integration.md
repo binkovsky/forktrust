@@ -1,6 +1,6 @@
 # AI integration guide
 
-How AI coding agents should use forktrust. Covers Claude Code, Cursor, Aider, Codex, and any tool that runs shell commands. The future MCP server (v0.7.5) is sketched at the end.
+How AI coding agents should use forktrust. Covers Claude Code, Cursor, Aider, Codex, and any tool that runs shell commands. v0.7.6 also ships an MCP server (`forktrust mcp`) for native typed-tool integration — see [docs/mcp.md](./mcp.md).
 
 ## Core principle
 
@@ -173,23 +173,11 @@ forktrust new fix-payment --json | jq .predicted_overlaps
 
 If two live worktrees both touch the same file, expect a merge conflict at `finish`. Future v0.8.0 will expose this as a separate `forktrust plan-merge` command.
 
-## Future: MCP server (v0.7.5)
+## MCP server (shipped in v0.7.6)
 
-Coming: `forktrust mcp` will run an MCP-protocol stdio server, exposing forktrust operations as typed tools so MCP-compatible agents (Claude Code, Cursor) call them directly without shelling out.
+`forktrust mcp` runs as a Model Context Protocol stdio server. MCP-speaking agents (Claude Code, Cursor) call forktrust operations as native typed tools — no more shell quoting, no more parsing stderr.
 
-Planned tool surface:
-
-| Tool | Inputs | Returns |
-|---|---|---|
-| `new_worktree` | `slug`, `project?`, `from?`, `install?`, `no_hooks?` | new JSON result |
-| `list_worktrees` | (none) | list JSON result |
-| `status` | `project?` | status JSON |
-| `finish_worktree` | `slug`, `project?`, `message?`, `dry_run?` | finish JSON |
-| `rm_worktree` | `slug`, `project?`, `force?`, `dry_run?` | rm JSON |
-| `get_ports` | `slug` | `{start, end}` |
-| `doctor` | `project?` | doctor JSON |
-
-Configure in Claude Code's `mcpServers`:
+Configure in Claude Code's `settings.json`:
 
 ```json
 {
@@ -202,7 +190,26 @@ Configure in Claude Code's `mcpServers`:
 }
 ```
 
-Until MCP ships, the shell-command pattern above is the official integration path.
+10 tools exposed (each wraps the corresponding `forktrust <cmd> --json`):
+
+| Tool | What it does |
+|---|---|
+| `forktrust_list` | list all worktrees |
+| `forktrust_status` | per-worktree dashboard |
+| `forktrust_new` | create worktree (supports `scope`) |
+| `forktrust_cd` | get worktree path |
+| `forktrust_finish` | merge + push + cleanup |
+| `forktrust_rm` | abandon (wip/* snapshot first) |
+| `forktrust_scope` | show / set / clear / check |
+| `forktrust_pr` | open GitHub PR |
+| `forktrust_pr_status` | CI / approvals / mergeable |
+| `forktrust_doctor` | health check |
+
+All safety guarantees (pre-flight refusal, dry-run parity, never-lose-WIP, verify + scope gates) carry over because each tool invokes the same forktrust CLI under the hood.
+
+Full protocol details, JSON-RPC framing, client integration recipes: [docs/mcp.md](./mcp.md).
+
+The shell-command pattern above still works and remains the official path for agents that don't speak MCP. MCP is purely additive.
 
 ## Summary: the contract
 

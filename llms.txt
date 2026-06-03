@@ -17,9 +17,10 @@ The canonical reference lives in `docs/`. Each file is a complete chapter; toget
 - [docs/safety-model.md](https://github.com/binkovsky/forktrust/blob/main/docs/safety-model.md): pre-flight refusal, dry-run parity, never-lose-WIP, refuse-on-conflict, refuse-on-ignored-loss, verify gate, scope gate, `.env.local` ownership, trust gate, path safety
 - [docs/scope.md](https://github.com/binkovsky/forktrust/blob/main/docs/scope.md): change contracts — declare which file globs a task may modify; `finish` refuses out-of-scope edits
 - [docs/pr.md](https://github.com/binkovsky/forktrust/blob/main/docs/pr.md): PR mode — `forktrust pr` opens a GitHub PR via `gh`; `forktrust pr-status` reports CI / approvals / mergeable
+- [docs/mcp.md](https://github.com/binkovsky/forktrust/blob/main/docs/mcp.md): MCP server (`forktrust mcp`) — stdio JSON-RPC 2.0; 10 typed tools wrapping forktrust commands for Claude Code, Cursor, etc.
 - [docs/workflows.md](https://github.com/binkovsky/forktrust/blob/main/docs/workflows.md): canonical patterns — parallel tasks, dirty main, abandon-and-restore, multi-repo, CI
 - [docs/troubleshooting.md](https://github.com/binkovsky/forktrust/blob/main/docs/troubleshooting.md): every error message and exit code mapped to a fix
-- [docs/ai-integration.md](https://github.com/binkovsky/forktrust/blob/main/docs/ai-integration.md): Claude Code, Cursor, Aider, Codex recipes; future MCP server design
+- [docs/ai-integration.md](https://github.com/binkovsky/forktrust/blob/main/docs/ai-integration.md): Claude Code, Cursor, Aider, Codex recipes; MCP server overview
 - [docs/shell-integration.md](https://github.com/binkovsky/forktrust/blob/main/docs/shell-integration.md): `ft()` function, tab completion, fzf picker, prompts
 
 ## Top-level
