@@ -22,11 +22,13 @@ import "encoding/json"
 // it requires updating tool schemas to match the spec at that version.
 const ProtocolVersion = "2024-11-05"
 
-// ServerName and ServerVersion go into the initialize response so MCP clients
-// can identify the implementation in their logs and configs.
+// ServerName goes into the initialize response so MCP clients can identify
+// the implementation in their logs and configs. ServerVersion is the default
+// when callers do not override Server.Version — production builds inject the
+// real build version via mcp.New(binary, version).
 const (
-	ServerName    = "forktrust-mcp"
-	ServerVersion = "0.7.6"
+	ServerName            = "forktrust-mcp"
+	DefaultServerVersion  = "dev"
 )
 
 // rpcRequest is one JSON-RPC 2.0 request frame.

@@ -19,15 +19,34 @@ type Server struct {
 	// tool call. Defaults to os.Args[0] when an empty string is passed to
 	// New, but callers should resolve via os.Executable() for safety.
 	Binary string
+	// Version reported in the initialize handshake's serverInfo.version.
+	// Empty falls back to DefaultServerVersion ("dev") so the MCP server is
+	// still usable in tests / unbuilt checkouts.
+	Version string
 	// MaxLineSize bounds the largest JSON-RPC frame the server will accept
 	// in a single line. Defaults to 16 MiB which is comfortably above
 	// realistic MCP payloads.
 	MaxLineSize int
 }
 
-// New constructs a Server with reasonable defaults.
-func New(binary string) *Server {
-	return &Server{Binary: binary, MaxLineSize: 16 * 1024 * 1024}
+// New constructs a Server with reasonable defaults. Pass the build-time
+// version string so the initialize handshake reports the actual binary
+// version (otherwise serverInfo.version drifts from what `forktrust --version`
+// reports, which has happened before).
+func New(binary, version string) *Server {
+	if version == "" {
+		version = DefaultServerVersion
+	}
+	return &Server{Binary: binary, Version: version, MaxLineSize: 16 * 1024 * 1024}
+}
+
+// versionOrDefault returns Server.Version, falling back to DefaultServerVersion
+// for zero-value Server structs constructed without New().
+func (s *Server) versionOrDefault() string {
+	if s.Version == "" {
+		return DefaultServerVersion
+	}
+	return s.Version
 }
 
 // Serve runs the JSON-RPC 2.0 + MCP read loop until in EOFs. Each line on `in`
@@ -127,7 +146,7 @@ func (s *Server) initialize() *rpcResponse {
 			},
 			ServerInfo: map[string]any{
 				"name":    ServerName,
-				"version": ServerVersion,
+				"version": s.versionOrDefault(),
 			},
 		},
 	}

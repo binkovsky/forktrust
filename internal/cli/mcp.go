@@ -64,7 +64,7 @@ func runMCP(_ *cobra.Command, _ []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	s := mcp.New(binary)
+	s := mcp.New(binary, version)
 	if err := s.Serve(ctx, os.Stdin, os.Stdout); err != nil {
 		// Don't echo errors to stdout — that would corrupt the JSON-RPC
 		// stream the client is still reading. Log to stderr.

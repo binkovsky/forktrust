@@ -41,7 +41,7 @@ func runOneRequest(t *testing.T, s *Server, req map[string]any) []map[string]any
 }
 
 func TestInitialize(t *testing.T) {
-	s := New("dummy")
+	s := New("dummy", "test")
 	resps := runOneRequest(t, s, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
@@ -73,10 +73,34 @@ func TestInitialize(t *testing.T) {
 	if info["name"] != ServerName {
 		t.Errorf("serverInfo.name = %v, want %v", info["name"], ServerName)
 	}
+	// Regression: v0.7.7 shipped with ServerVersion hardcoded to "0.7.6",
+	// so the MCP handshake reported the wrong binary version. Verify the
+	// constructor's version arg flows through to serverInfo.version.
+	if info["version"] != "test" {
+		t.Errorf("serverInfo.version = %v, want %q (constructor-injected)", info["version"], "test")
+	}
+}
+
+func TestInitialize_DefaultVersion(t *testing.T) {
+	// Zero-value Server (no New) should still report a sane version so tests
+	// and ad-hoc Server{} constructions in callers don't crash with empty.
+	s := New("dummy", "")
+	resps := runOneRequest(t, s, map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "initialize",
+		"params": map[string]any{
+			"protocolVersion": "2024-11-05",
+			"clientInfo":      map[string]any{"name": "t", "version": "1"},
+			"capabilities":    map[string]any{},
+		},
+	})
+	info := resps[0]["result"].(map[string]any)["serverInfo"].(map[string]any)
+	if info["version"] != DefaultServerVersion {
+		t.Errorf("empty version should fall back to %q, got %v", DefaultServerVersion, info["version"])
+	}
 }
 
 func TestToolsList(t *testing.T) {
-	s := New("dummy")
+	s := New("dummy", "test")
 	resps := runOneRequest(t, s, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      2,
@@ -136,7 +160,7 @@ func TestToolsList(t *testing.T) {
 }
 
 func TestUnknownMethod(t *testing.T) {
-	s := New("dummy")
+	s := New("dummy", "test")
 	resps := runOneRequest(t, s, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      99,
@@ -155,7 +179,7 @@ func TestUnknownMethod(t *testing.T) {
 }
 
 func TestNotificationGetsNoResponse(t *testing.T) {
-	s := New("dummy")
+	s := New("dummy", "test")
 	// No "id" field → notification per JSON-RPC 2.0
 	resps := runOneRequest(t, s, map[string]any{
 		"jsonrpc": "2.0",
@@ -167,7 +191,7 @@ func TestNotificationGetsNoResponse(t *testing.T) {
 }
 
 func TestParseErrorOnMalformedLine(t *testing.T) {
-	s := New("dummy")
+	s := New("dummy", "test")
 	in := bytes.NewBufferString("not json at all\n")
 	out := bytes.Buffer{}
 	if err := s.Serve(context.Background(), in, &out); err != nil {
@@ -187,7 +211,7 @@ func TestParseErrorOnMalformedLine(t *testing.T) {
 }
 
 func TestInvalidJSONRPCVersion(t *testing.T) {
-	s := New("dummy")
+	s := New("dummy", "test")
 	resps := runOneRequest(t, s, map[string]any{
 		"jsonrpc": "1.0", // wrong
 		"id":      1,
@@ -206,7 +230,7 @@ func TestInvalidJSONRPCVersion(t *testing.T) {
 }
 
 func TestPing(t *testing.T) {
-	s := New("dummy")
+	s := New("dummy", "test")
 	resps := runOneRequest(t, s, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      "p1",
@@ -221,7 +245,7 @@ func TestPing(t *testing.T) {
 }
 
 func TestToolsCallMissingArguments(t *testing.T) {
-	s := New("dummy")
+	s := New("dummy", "test")
 	resps := runOneRequest(t, s, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      "x",
@@ -241,7 +265,7 @@ func TestToolsCallMissingArguments(t *testing.T) {
 }
 
 func TestToolsCallUnknownTool(t *testing.T) {
-	s := New("dummy")
+	s := New("dummy", "test")
 	resps := runOneRequest(t, s, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      "x",
@@ -262,7 +286,7 @@ func TestToolsCallUnknownTool(t *testing.T) {
 
 func TestStringIDRoundtrip(t *testing.T) {
 	// JSON-RPC IDs can be strings, numbers, or null. We must pass them through verbatim.
-	s := New("dummy")
+	s := New("dummy", "test")
 	resps := runOneRequest(t, s, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      "req-abc-123",
@@ -277,7 +301,7 @@ func TestStringIDRoundtrip(t *testing.T) {
 }
 
 func TestMultipleRequestsInOneStream(t *testing.T) {
-	s := New("dummy")
+	s := New("dummy", "test")
 	in := bytes.Buffer{}
 	for i := 1; i <= 3; i++ {
 		data, _ := json.Marshal(map[string]any{
@@ -302,7 +326,7 @@ func TestMultipleRequestsInOneStream(t *testing.T) {
 // The forktrust scope command also enforces this, but catching it at the MCP layer means
 // the model gets a faster, clearer error.
 func TestScopeMutexEnforced(t *testing.T) {
-	s := New("dummy") // tool handlers never reach exec because mutex check fails first
+	s := New("dummy", "test") // tool handlers never reach exec because mutex check fails first
 	resps := runOneRequest(t, s, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      "x",
