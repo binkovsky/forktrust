@@ -15,8 +15,9 @@ var (
 	prProject  string
 	prDryRun   bool
 	prJSON     bool
-	prNoVerify bool
-	prNoScope  bool
+	prNoVerify  bool
+	prNoScope   bool
+	prNoSummary bool
 	prTitle    string
 	prBody     string
 	prBase     string
@@ -72,6 +73,7 @@ func init() {
 	prCmd.Flags().BoolVar(&prJSON, "json", false, "emit a structured JSON result on stdout")
 	prCmd.Flags().BoolVar(&prNoVerify, "no-verify", false, "skip the [verify] gate (prints a warning)")
 	prCmd.Flags().BoolVar(&prNoScope, "no-scope", false, "skip the scope contract check (prints a warning)")
+	prCmd.Flags().BoolVar(&prNoSummary, "no-summary", false, "skip the [summary] commit-message contract check (prints a warning)")
 	prCmd.Flags().StringVar(&prTitle, "title", "", "PR title (default: first commit subject from the branch)")
 	prCmd.Flags().StringVar(&prBody, "body", "", "PR body (default: bullet list of commit subjects + footer)")
 	prCmd.Flags().StringVar(&prBase, "base", "", "base branch for the PR (default: project's mainBranch, typically main)")
@@ -222,13 +224,61 @@ func runPR(_ *cobra.Command, args []string) error {
 		}
 	}
 
+	// Summary gate (same semantics as finish: refuse to auto-WIP under contract).
+	sumR, sumErr := evalSummary(proj.Path, wtPath, aheadRef)
+	if sumErr != nil {
+		_ = emitPR(r)
+		return sumErr
+	}
+	r.SummaryConfigured = sumR.Configured
+	if prNoSummary {
+		r.NoSummary = true
+		if sumR.Configured && !prDryRun {
+			fmt.Fprintln(os.Stderr, "WARNING: --no-summary skipped the [summary] commit-message contract.")
+		}
+	} else if sumR.Configured {
+		if dirty > 0 {
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintf(os.Stderr, "REFUSE: [summary] contract is declared and the worktree has %d uncommitted change(s).\n", dirty)
+			fmt.Fprintln(os.Stderr, "Auto-WIP would not satisfy your commit-message rules. Commit your work yourself, then re-run `forktrust pr`.")
+			_ = emitPR(r)
+			return coded(ExitSummaryViolation, fmt.Errorf("summary gate: %d uncommitted change(s) cannot be auto-WIP'd under a [summary] contract", dirty))
+		}
+		r.SummaryChecked = true
+		r.SummaryPassed = sumR.Passed
+		r.SummaryCommits = sumR.Commits
+		r.SummaryViolationCount = sumR.ViolationCount
+		r.SummaryViolations = truncateViolations(sumR.Violations, 100)
+		if !sumR.Passed {
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintf(os.Stderr, "REFUSE: [summary] gate failed — %d violation(s) across %d commit(s):\n", sumR.ViolationCount, sumR.Commits)
+			for _, v := range r.SummaryViolations {
+				sha := v.CommitSHA
+				if len(sha) > 7 {
+					sha = sha[:7]
+				}
+				fmt.Fprintf(os.Stderr, "  %s  [%s]  %s\n", sha, v.Rule, v.Reason)
+				if v.Subject != "" {
+					fmt.Fprintf(os.Stderr, "    subject: %s\n", v.Subject)
+				}
+			}
+			_ = emitPR(r)
+			return coded(ExitSummaryViolation, fmt.Errorf("summary gate: %d violation(s)", sumR.ViolationCount))
+		}
+	}
+
 	// Dry-run stops here with the plan.
 	if prDryRun {
 		r.WouldRefuse = ""
-		if !aheadKnownForPR(aheadRef) {
+		switch {
+		case !aheadKnownForPR(aheadRef):
 			r.WouldRefuse = fmt.Sprintf("no main reference resolved (exit %d)", ExitAheadUnknown)
-		} else if r.ScopeConfigured && !r.ScopePassed && !prNoScope {
+		case r.ScopeConfigured && !r.ScopePassed && !prNoScope:
 			r.WouldRefuse = fmt.Sprintf("scope gate would fail (exit %d)", ExitScopeViolation)
+		case r.SummaryConfigured && !prNoSummary && dirty > 0:
+			r.WouldRefuse = fmt.Sprintf("[summary] contract + %d uncommitted file(s); auto-WIP blocked (exit %d)", dirty, ExitSummaryViolation)
+		case r.SummaryConfigured && !r.SummaryPassed && !prNoSummary:
+			r.WouldRefuse = fmt.Sprintf("[summary] gate would fail: %d violation(s) (exit %d)", r.SummaryViolationCount, ExitSummaryViolation)
 		}
 		return previewPR(r)
 	}

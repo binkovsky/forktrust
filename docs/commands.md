@@ -298,7 +298,7 @@ forktrust mcp
 
 Reads newline-delimited JSON-RPC 2.0 requests from stdin and writes responses to stdout. Designed to be spawned by an MCP client (Claude Code, Cursor, etc.), not invoked interactively.
 
-10 tools exposed: `forktrust_list`, `forktrust_status`, `forktrust_new`, `forktrust_cd`, `forktrust_finish`, `forktrust_rm`, `forktrust_scope`, `forktrust_pr`, `forktrust_pr_status`, `forktrust_doctor`.
+11 tools exposed: `forktrust_list`, `forktrust_status`, `forktrust_new`, `forktrust_cd`, `forktrust_finish`, `forktrust_rm`, `forktrust_scope`, `forktrust_summary`, `forktrust_pr`, `forktrust_pr_status`, `forktrust_doctor`.
 
 Configure in Claude Code's `settings.json`:
 
@@ -401,6 +401,45 @@ Exit codes:
 - 7 — slug matches worktrees in multiple projects
 - 12 — `--check` could not resolve main ref to diff against
 - 16 — `--check` found out-of-scope edits
+
+---
+
+## `forktrust summary <slug>`
+
+Show or check the `[summary]` commit-message contract declared in `.forktrustconfig`. The contract is enforced automatically by `finish` and `pr` (exit 19); this command lets you preview it without shipping. See [summary.md](./summary.md) for full reference.
+
+```
+forktrust summary <slug> [--show] [--check] [--project <name>] [--json]
+```
+
+Modes (mutually exclusive; default is `--show`):
+
+| Flag | Effect |
+|---|---|
+| `--show` | print the declared `[summary]` rules (default) |
+| `--check` | evaluate commits in `<base>..HEAD`; exit 19 if any commit violates a rule |
+| `--json` | emit a structured JSON object on stdout |
+| `--project <name>` | disambiguate when the slug is registered in multiple projects |
+
+Examples:
+
+```bash
+# Show contract
+forktrust summary my-task
+
+# Check before pushing — same gate that finish runs
+forktrust summary my-task --check && forktrust finish my-task
+
+# Machine-readable
+forktrust summary my-task --check --json | jq '.violations[] | {rule, reason}'
+```
+
+Exit codes:
+- 0 — show, or `--check` passed
+- 6 — no worktree matching slug
+- 7 — slug matches worktrees in multiple projects
+- 12 — `--check` could not resolve main ref to list commits
+- 19 — `--check` found commit-message violations
 
 ---
 

@@ -29,7 +29,7 @@ After restart, the model sees ten typed tools (`forktrust_list`, `forktrust_new`
 - Reads newline-delimited JSON-RPC 2.0 requests from stdin.
 - Writes newline-delimited JSON-RPC 2.0 responses to stdout.
 - Speaks the [MCP 2024-11-05](https://spec.modelcontextprotocol.io/specification/2024-11-05/) protocol (initialize, tools/list, tools/call).
-- Exposes 10 tools, each a thin wrapper around the corresponding `forktrust <cmd> --json`.
+- Exposes 11 tools, each a thin wrapper around the corresponding `forktrust <cmd> --json`.
 
 It exits cleanly when stdin EOFs (i.e. when the client disconnects) or when it receives SIGINT/SIGTERM.
 

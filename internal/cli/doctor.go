@@ -298,6 +298,9 @@ func checkProject(rep *doctorReport, p config.Project) {
 		if repoCfg.Verify != nil {
 			msg += fmt.Sprintf("; [verify] %d command(s)", len(repoCfg.Verify.Commands))
 		}
+		if repoCfg.Summary != nil {
+			msg += "; [summary] contract"
+		}
 		rep.add(doctorCheck{Name: "repo-config", Scope: scope, Status: statusOK, Message: msg})
 
 		// 5a. Verify config sanity (commands actually look runnable).
@@ -306,6 +309,13 @@ func checkProject(rep *doctorReport, p config.Project) {
 		// the cost of a typo is a finish-time exit 15 deep into the pipeline.
 		if repoCfg.Verify != nil {
 			rep.add(checkVerifyConfig(p.Name, repoCfg.Verify))
+		}
+
+		// 5b. Summary contract sanity. Validate.LoadRepoConfig already
+		// rejected invalid regex; here we describe the contract so the user
+		// sees what `finish` will enforce. No expensive probe (zero git ops).
+		if repoCfg.Summary != nil {
+			rep.add(checkSummaryConfig(p.Name, repoCfg.Summary))
 		}
 
 		// 5. If command hooks exist, check trust.
@@ -386,6 +396,48 @@ func checkVerifyConfig(projName string, v *config.VerifyConfig) doctorCheck {
 		msg += "; require_clean"
 	}
 	return doctorCheck{Name: "verify-config", Scope: projName, Status: statusOK, Message: msg}
+}
+
+// checkSummaryConfig surfaces a one-line description of the [summary] contract
+// so the user sees what `finish` / `pr` will enforce. We do NOT run the regex
+// against any commits here — that's evalSummary's job. The only failure mode
+// is "config present but every rule disabled" (= effective no-op), which we
+// flag as a warning to nudge the user to either remove the section or add
+// real rules.
+func checkSummaryConfig(projName string, s *config.SummaryConfig) doctorCheck {
+	rules := 0
+	parts := []string{}
+	if s.Required {
+		rules++
+		parts = append(parts, "required")
+	}
+	if s.MinBodyLength > 0 {
+		rules++
+		parts = append(parts, fmt.Sprintf("min_body_length=%d", s.MinBodyLength))
+	}
+	if s.MaxBodyLength > 0 {
+		rules++
+		parts = append(parts, fmt.Sprintf("max_body_length=%d", s.MaxBodyLength))
+	}
+	if len(s.RequireSubjectPrefix) > 0 {
+		rules++
+		parts = append(parts, fmt.Sprintf("subject_prefix(%d)", len(s.RequireSubjectPrefix)))
+	}
+	if s.RequireTicketPattern != "" {
+		rules++
+		parts = append(parts, "ticket_pattern")
+	}
+	if len(s.ForbiddenPatterns) > 0 {
+		rules++
+		parts = append(parts, fmt.Sprintf("forbidden(%d)", len(s.ForbiddenPatterns)))
+	}
+	if rules == 0 {
+		return doctorCheck{Name: "summary-config", Scope: projName, Status: statusWarn,
+			Message: "[summary] section present but every rule is disabled (no-op)",
+			Hint:    "either remove [summary] from .forktrustconfig or add at least one rule (required, min_body_length, require_subject_prefix, ...)"}
+	}
+	return doctorCheck{Name: "summary-config", Scope: projName, Status: statusOK,
+		Message: fmt.Sprintf("%d rule(s) active: %s", rules, strings.Join(parts, ", "))}
 }
 
 // checkScopesDir enumerates <repoPath>/.forktrust/scopes/*.toml and reports

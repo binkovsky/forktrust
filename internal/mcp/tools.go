@@ -77,7 +77,7 @@ var allTools = []tool{
 	},
 	{
 		Name:        "forktrust_finish",
-		Description: "Ship a worktree: commit WIP, run pre-flight (verify + scope gates), merge --no-ff to main, push, cleanup. Refuses on conflict (exit 2). Use dry_run=true first to preview.",
+		Description: "Ship a worktree: commit WIP, run pre-flight (verify + scope + summary gates), merge --no-ff to main, push, cleanup. Refuses on conflict (exit 2). Use dry_run=true first to preview.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -87,6 +87,7 @@ var allTools = []tool{
 				"dry_run":    boolSchema("Preview only — report would_refuse without mutating git state."),
 				"no_verify":  boolSchema("Skip the [verify] gate (use only with explicit user consent)."),
 				"no_scope":   boolSchema("Skip the change-contract scope gate (use only with explicit user consent)."),
+				"no_summary": boolSchema("Skip the [summary] commit-message contract gate (use only with explicit user consent)."),
 			},
 			"required": []string{"slug"},
 		},
@@ -132,9 +133,10 @@ var allTools = []tool{
 				"body":      optionalString("PR body (default: bullet list of commit subjects + forktrust footer)."),
 				"base":      optionalString("Base branch (default: project's mainBranch, usually \"main\")."),
 				"draft":     boolSchema("Open as a draft PR."),
-				"no_verify": boolSchema("Skip the [verify] gate."),
-				"no_scope":  boolSchema("Skip the scope contract check."),
-				"dry_run":   boolSchema("Preview only — run pre-flight without push/PR-create side effects."),
+				"no_verify":  boolSchema("Skip the [verify] gate."),
+				"no_scope":   boolSchema("Skip the scope contract check."),
+				"no_summary": boolSchema("Skip the [summary] commit-message contract gate."),
+				"dry_run":    boolSchema("Preview only — run pre-flight without push/PR-create side effects."),
 			},
 			"required": []string{"slug"},
 		},
@@ -147,6 +149,19 @@ var allTools = []tool{
 			"properties": map[string]any{
 				"slug":    stringSchema("Worktree slug."),
 				"project": optionalString("Project name (if ambiguous)."),
+			},
+			"required": []string{"slug"},
+		},
+	},
+	{
+		Name:        "forktrust_summary",
+		Description: "Show or check the [summary] commit-message contract for a worktree (v0.7.7). Without check=true, prints the declared contract. With check=true, evaluates the worktree's commits against the contract; exit 19 if any commit violates a rule.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"slug":    stringSchema("Worktree slug."),
+				"project": optionalString("Project name (if ambiguous)."),
+				"check":   boolSchema("Evaluate commits against the contract; non-zero on violation."),
 			},
 			"required": []string{"slug"},
 		},
@@ -239,6 +254,9 @@ var handlers = map[string]handlerFunc{
 		if boolArg(args, "no_scope") {
 			a = append(a, "--no-scope")
 		}
+		if boolArg(args, "no_summary") {
+			a = append(a, "--no-summary")
+		}
 		return runForktrust(ctx, binary, a...)
 	},
 	"forktrust_rm": func(ctx context.Context, binary string, args map[string]any) (string, bool) {
@@ -320,6 +338,9 @@ var handlers = map[string]handlerFunc{
 		if boolArg(args, "no_scope") {
 			a = append(a, "--no-scope")
 		}
+		if boolArg(args, "no_summary") {
+			a = append(a, "--no-summary")
+		}
 		if boolArg(args, "dry_run") {
 			a = append(a, "--dry-run")
 		}
@@ -333,6 +354,20 @@ var handlers = map[string]handlerFunc{
 		a := []string{"pr-status", slug, "--json"}
 		if v, ok := stringArg(args, "project"); ok {
 			a = append(a, "-p", v)
+		}
+		return runForktrust(ctx, binary, a...)
+	},
+	"forktrust_summary": func(ctx context.Context, binary string, args map[string]any) (string, bool) {
+		slug, ok := stringArg(args, "slug")
+		if !ok {
+			return "missing required argument: slug", true
+		}
+		a := []string{"summary", slug, "--json"}
+		if v, ok := stringArg(args, "project"); ok {
+			a = append(a, "-p", v)
+		}
+		if boolArg(args, "check") {
+			a = append(a, "--check")
 		}
 		return runForktrust(ctx, binary, a...)
 	},

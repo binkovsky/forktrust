@@ -27,6 +27,7 @@ Codes are stable across releases. New codes are added at the high end; existing 
 | 16 | finish/scope-check: diff touches files outside the declared `--scope` contract |
 | 17 | pr/pr-status: `gh` CLI not available (not installed or not authenticated) |
 | 18 | pr: `gh pr create` returned non-zero (validation, permissions, network) |
+| 19 | finish/pr/summary-check: one or more commits violate the `[summary]` contract |
 
 ## Full catalog
 
@@ -211,6 +212,27 @@ git -C <main-repo> branch -D <branch>
 
 ---
 
+### `19` — `[summary]` contract violated
+
+`finish`, `pr`, or `forktrust summary <slug> --check` evaluated commit messages in the worktree's range and found one or more violations of the `[summary]` contract declared in `.forktrustconfig`.
+
+There are TWO failure shapes — both exit 19:
+
+1. **Auto-WIP refusal.** A `[summary]` contract is declared AND the worktree has uncommitted changes. forktrust refuses to write an auto-WIP commit (the message would never satisfy your rules). You'll see "auto-WIP would not satisfy your commit-message rules" in stderr. **Fix:** commit your work yourself with a message that satisfies the contract.
+
+2. **Commit content violation.** One or more existing commits fail at least one rule (subject prefix, body length, ticket regex, forbidden substring). JSON contains `summary_violations: [{commit_sha, subject, rule, reason}, ...]`. **Fix:** `git rebase -i <base>` and amend offending commits.
+
+**No git mutation happened.** Pre-flight refusal — no auto-WIP commit, no merge, no push.
+
+**User:** three options:
+1. **Amend the commits** (the most honest path): `git commit --amend` or `git rebase -i <base>` then re-run.
+2. **Loosen the contract**: edit `.forktrustconfig` to remove the failing rule.
+3. **Bypass after manual review**: `forktrust finish <slug> --no-summary` (stderr warn, sets `no_summary: true`).
+
+**Agent:** STOP. Surface `summary_violations` to the user. NEVER `--no-summary` without explicit consent — the contract exists so YOU describe the change, not so forktrust hides poor descriptions.
+
+---
+
 ### `18` — `gh pr create` failed
 
 `forktrust pr` got past the pre-flight, pushed the branch successfully, but the subsequent `gh pr create` returned non-zero. The branch IS pushed (you can verify with `git ls-remote origin fork/<slug>`); only the PR creation failed.
@@ -319,6 +341,7 @@ exit code
 ├── 16     → surface scope_violations list to user; ask user; never --no-scope
 ├── 17     → tell user to install gh or run gh auth login; do not auto-install
 ├── 18     → surface stderr from gh; show repro command; do not blind-retry
+├── 19     → surface summary_violations to user; ask user; never --no-summary
 └── other  → surface raw error
 ```
 

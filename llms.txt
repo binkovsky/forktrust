@@ -17,7 +17,8 @@ The canonical reference lives in `docs/`. Each file is a complete chapter; toget
 - [docs/safety-model.md](https://github.com/binkovsky/forktrust/blob/main/docs/safety-model.md): pre-flight refusal, dry-run parity, never-lose-WIP, refuse-on-conflict, refuse-on-ignored-loss, verify gate, scope gate, `.env.local` ownership, trust gate, path safety
 - [docs/scope.md](https://github.com/binkovsky/forktrust/blob/main/docs/scope.md): change contracts — declare which file globs a task may modify; `finish` refuses out-of-scope edits
 - [docs/pr.md](https://github.com/binkovsky/forktrust/blob/main/docs/pr.md): PR mode — `forktrust pr` opens a GitHub PR via `gh`; `forktrust pr-status` reports CI / approvals / mergeable
-- [docs/mcp.md](https://github.com/binkovsky/forktrust/blob/main/docs/mcp.md): MCP server (`forktrust mcp`) — stdio JSON-RPC 2.0; 10 typed tools wrapping forktrust commands for Claude Code, Cursor, etc.
+- [docs/mcp.md](https://github.com/binkovsky/forktrust/blob/main/docs/mcp.md): MCP server (`forktrust mcp`) — stdio JSON-RPC 2.0; 11 typed tools wrapping forktrust commands for Claude Code, Cursor, etc.
+- [docs/summary.md](https://github.com/binkovsky/forktrust/blob/main/docs/summary.md): Summary contract — `.forktrustconfig` `[summary]` declares commit-message rules (prefix, length, ticket regex, forbidden patterns); `finish` refuses on violation (exit 19)
 - [docs/workflows.md](https://github.com/binkovsky/forktrust/blob/main/docs/workflows.md): canonical patterns — parallel tasks, dirty main, abandon-and-restore, multi-repo, CI
 - [docs/troubleshooting.md](https://github.com/binkovsky/forktrust/blob/main/docs/troubleshooting.md): every error message and exit code mapped to a fix
 - [docs/ai-integration.md](https://github.com/binkovsky/forktrust/blob/main/docs/ai-integration.md): Claude Code, Cursor, Aider, Codex recipes; MCP server overview
@@ -43,7 +44,7 @@ Abandon (snapshots WIP first):
 forktrust rm <slug>                        # → wip/<branch>-YYYYMMDD-HHMMSS-<sha7>
 ```
 
-## Seven hard guarantees
+## Eight hard guarantees
 
 1. **Pre-flight refusal** — non-zero exit ⇒ no git mutation happened.
 2. **Dry-run parity** — `--dry-run --json`'s `would_refuse` exactly matches real-command behavior (exception: verify is not executed in dry-run; scope IS).
@@ -52,6 +53,7 @@ forktrust rm <slug>                        # → wip/<branch>-YYYYMMDD-HHMMSS-<s
 5. **Refuse-on-ignored-loss** — exit 14 if `git worktree remove` would silently delete ignored files.
 6. **Verify gate** — `[verify]` section in `.forktrustconfig` declares commands that must exit zero before `finish` may merge. Exit 15 on failure. Bypass: `finish --no-verify` (warned).
 7. **Scope gate (change contract)** — per-worktree scope file (`forktrust new --scope "globs"` or `forktrust scope --set`) limits which files the task may modify. Exit 16 if the diff is out-of-scope. Bypass: `finish --no-scope` (warned).
+8. **Summary gate (commit-message contract)** — `[summary]` in `.forktrustconfig` declares per-commit rules (subject prefix, body length, ticket regex, forbidden patterns). `finish` and `pr` refuse (exit 19) on violation. Bypass: `finish --no-summary` (warned). Includes an auto-WIP refusal so users with a contract are forced to write real messages instead of `WIP: <slug>`.
 
 `.env.local` is treated as forktrust-managed only if (a) regular file at worktree root, (b) starts with the exact `# Managed by forktrust...` header.
 
@@ -77,6 +79,7 @@ forktrust rm <slug>                        # → wip/<branch>-YYYYMMDD-HHMMSS-<s
 | 16 | finish/scope-check refused: worktree diff touches files outside declared --scope contract |
 | 17 | pr/pr-status: gh CLI not available (install gh, or run gh auth login) |
 | 18 | pr: gh pr create returned non-zero |
+| 19 | finish/pr/summary-check refused: one or more commits violate the .forktrustconfig [summary] contract |
 
 Full action table: [docs/exit-codes.md](https://github.com/binkovsky/forktrust/blob/main/docs/exit-codes.md).
 

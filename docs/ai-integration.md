@@ -190,7 +190,7 @@ Configure in Claude Code's `settings.json`:
 }
 ```
 
-10 tools exposed (each wraps the corresponding `forktrust <cmd> --json`):
+11 tools exposed (each wraps the corresponding `forktrust <cmd> --json`):
 
 | Tool | What it does |
 |---|---|
@@ -204,6 +204,7 @@ Configure in Claude Code's `settings.json`:
 | `forktrust_pr` | open GitHub PR |
 | `forktrust_pr_status` | CI / approvals / mergeable |
 | `forktrust_doctor` | health check |
+| `forktrust_summary` | show / check the [summary] commit-message contract |
 
 All safety guarantees (pre-flight refusal, dry-run parity, never-lose-WIP, verify + scope gates) carry over because each tool invokes the same forktrust CLI under the hood.
 

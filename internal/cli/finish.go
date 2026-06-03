@@ -19,8 +19,9 @@ var (
 	finishProject  string
 	finishDryRun   bool
 	finishJSON     bool
-	finishNoVerify bool
-	finishNoScope  bool
+	finishNoVerify  bool
+	finishNoScope   bool
+	finishNoSummary bool
 )
 
 var finishCmd = &cobra.Command{
@@ -53,7 +54,8 @@ Exit codes:
   13  worktree removed but git branch -D failed (branch lingers)
   14  worktree has ignored files that would be permanently deleted
   15  verify gate failed: a [verify].commands entry exited non-zero, or require_clean is set and the worktree is dirty after verify
-  16  scope gate failed: the worktree diff touches files outside the declared --scope contract`,
+  16  scope gate failed: the worktree diff touches files outside the declared --scope contract
+  19  summary gate failed: one or more commits violate the [summary] contract in .forktrustconfig`,
 	Args: cobra.ExactArgs(1),
 	RunE: runFinish,
 }
@@ -65,6 +67,7 @@ func init() {
 	finishCmd.Flags().BoolVar(&finishJSON, "json", false, "emit a structured JSON result on stdout (one object)")
 	finishCmd.Flags().BoolVar(&finishNoVerify, "no-verify", false, "skip the [verify] gate (prints a warning); only use when you really know what you're doing")
 	finishCmd.Flags().BoolVar(&finishNoScope, "no-scope", false, "skip the change-contract scope check (prints a warning); use when you have manually reviewed out-of-scope edits")
+	finishCmd.Flags().BoolVar(&finishNoSummary, "no-summary", false, "skip the [summary] commit-message contract check (prints a warning)")
 }
 
 func runFinish(_ *cobra.Command, args []string) error {
@@ -254,7 +257,62 @@ func runFinish(_ *cobra.Command, args []string) error {
 		}
 	}
 
-	// 2f. NOW it's safe to commit uncommitted WIP on the worktree branch.
+	// 2f. Summary (commit-message contract) gate. Runs BEFORE auto-WIP so
+	// users with a contract are forced to write real commit messages
+	// themselves — an auto-WIP "WIP: <slug>" message would never satisfy
+	// an arbitrary user-defined contract.
+	sumR, sumErr := evalSummary(proj.Path, wtPath, aheadRef)
+	if sumErr != nil {
+		_ = emitFinish(r)
+		return sumErr
+	}
+	r.SummaryConfigured = sumR.Configured
+	if finishNoSummary {
+		r.NoSummary = true
+		if sumR.Configured {
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, "WARNING: --no-summary SKIPPED the [summary] commit-message contract. The merge will land even though commit messages may not satisfy it.")
+			fmt.Fprintln(os.Stderr, "Only use --no-summary when you have already reviewed the commit messages manually.")
+		}
+	} else if sumR.Configured {
+		// Refuse to auto-WIP under a contract.
+		if dirty > 0 {
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintf(os.Stderr, "REFUSE: [summary] contract is declared and the worktree has %d uncommitted change(s).\n", dirty)
+			fmt.Fprintln(os.Stderr, "Auto-WIP would not satisfy your commit-message rules. Commit your work yourself, e.g.:")
+			fmt.Fprintf(os.Stderr, "  git -C %s add -A && git -C %s commit -m \"<your message>\"\n", wtPath, wtPath)
+			fmt.Fprintln(os.Stderr, "Or pass --no-summary to bypass (not recommended).")
+			_ = emitFinish(r)
+			return coded(ExitSummaryViolation, fmt.Errorf("summary gate: %d uncommitted change(s) cannot be auto-WIP'd under a [summary] contract", dirty))
+		}
+		r.SummaryChecked = true
+		r.SummaryPassed = sumR.Passed
+		r.SummaryCommits = sumR.Commits
+		r.SummaryViolationCount = sumR.ViolationCount
+		r.SummaryViolations = truncateViolations(sumR.Violations, 100)
+		if !sumR.Passed {
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintf(os.Stderr, "REFUSE: [summary] gate failed — %d violation(s) across %d commit(s):\n", sumR.ViolationCount, sumR.Commits)
+			for _, v := range r.SummaryViolations {
+				sha := v.CommitSHA
+				if len(sha) > 7 {
+					sha = sha[:7]
+				}
+				fmt.Fprintf(os.Stderr, "  %s  [%s]  %s\n", sha, v.Rule, v.Reason)
+				if v.Subject != "" {
+					fmt.Fprintf(os.Stderr, "    subject: %s\n", v.Subject)
+				}
+			}
+			if sumR.ViolationCount > len(r.SummaryViolations) {
+				fmt.Fprintf(os.Stderr, "  ... and %d more (see JSON output for full list)\n", sumR.ViolationCount-len(r.SummaryViolations))
+			}
+			fmt.Fprintln(os.Stderr, "Either amend the offending commits (git rebase -i / git commit --amend) or pass --no-summary to bypass.")
+			_ = emitFinish(r)
+			return coded(ExitSummaryViolation, fmt.Errorf("summary gate: %d violation(s)", sumR.ViolationCount))
+		}
+	}
+
+	// 2g. NOW it's safe to commit uncommitted WIP on the worktree branch.
 	if dirty > 0 {
 		msg := finishMessage
 		if msg == "" {
@@ -434,6 +492,23 @@ func previewFinish(r finishResult, mainBranch, mainPath string) error {
 		r.NoScope = true
 	}
 
+	// Summary eval in dry-run: pure read (git log + rule check), so we DO
+	// execute it. Predicts exit 19 accurately, INCLUDING the "auto-WIP
+	// blocked under a [summary] contract" mode (dirty + Configured).
+	if aheadKnown && !finishNoSummary {
+		sumR, _ := evalSummary(mainPath, r.WorktreePath, aheadRef)
+		r.SummaryConfigured = sumR.Configured
+		if sumR.Configured {
+			r.SummaryChecked = true
+			r.SummaryPassed = sumR.Passed
+			r.SummaryCommits = sumR.Commits
+			r.SummaryViolationCount = sumR.ViolationCount
+			r.SummaryViolations = truncateViolations(sumR.Violations, 100)
+		}
+	} else if finishNoSummary {
+		r.NoSummary = true
+	}
+
 	// Mirror runFinish refusal order exactly — dry-run must agree with real finish.
 	// Real finish order: (1) no main ref → exit 12; (2) ignored files → exit 14;
 	// (3) wrong branch → exit 10; (4) dirty main → exit 3;
@@ -450,6 +525,10 @@ func previewFinish(r finishResult, mainBranch, mainPath string) error {
 		r.WouldRefuse = fmt.Sprintf("main checkout is dirty (%d uncommitted file(s)) (exit %d)", mainDirty, ExitDirtyMain)
 	case r.ScopeConfigured && !r.ScopePassed && !finishNoScope:
 		r.WouldRefuse = fmt.Sprintf("scope gate failed: %d file(s) outside declared --scope (exit %d). Widen scope, revert out-of-scope edits, or pass --no-scope to bypass.", r.ScopeViolationCount, ExitScopeViolation)
+	case r.SummaryConfigured && !finishNoSummary && r.UncommittedFiles > 0:
+		r.WouldRefuse = fmt.Sprintf("[summary] contract declared and %d uncommitted file(s) — auto-WIP would not satisfy your rules (exit %d). Commit them yourself, or pass --no-summary.", r.UncommittedFiles, ExitSummaryViolation)
+	case r.SummaryConfigured && !r.SummaryPassed && !finishNoSummary:
+		r.WouldRefuse = fmt.Sprintf("[summary] gate failed: %d violation(s) across %d commit(s) (exit %d). Amend the commits or pass --no-summary.", r.SummaryViolationCount, r.SummaryCommits, ExitSummaryViolation)
 	}
 
 	if finishJSON {

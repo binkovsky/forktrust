@@ -360,12 +360,41 @@ JSON `finish` output includes the diagnosis:
 
 Plus `exit code 15`. See [exit-codes.md](./exit-codes.md#15--verify-gate-failed).
 
+## `[summary]` (commit-message contract — v0.7.7)
+
+```toml
+[summary]
+required               = true
+min_body_length        = 20
+max_body_length        = 2000
+require_subject_prefix = ["feat", "fix", "refactor", "docs", "chore", "test", "perf", "build", "ci", "style", "revert"]
+require_ticket_pattern = "[A-Z]+-[0-9]+"
+forbidden_patterns     = ["TODO", "WIP", "TBD"]
+```
+
+All fields are optional. Enforced by `forktrust finish` and `forktrust pr` in pre-flight (after verify and scope, before merge/push); exit 19 on violation.
+
+| Field | Effect |
+|---|---|
+| `required` | At least one commit must exist in worktree's range. |
+| `min_body_length` | Body bytes ≥ N. Body = everything after the subject + blank line. |
+| `max_body_length` | Body bytes ≤ N. |
+| `require_subject_prefix` | Subject starts with `<prefix>: ` / `<prefix>(scope): ` / `<prefix>!: ` (Conventional Commits). |
+| `require_ticket_pattern` | Go regex must match anywhere in subject + body. |
+| `forbidden_patterns` | Case-insensitive substrings NOT allowed in subject + body. |
+
+Important interaction: when `[summary]` is configured AND the worktree has uncommitted changes, `finish`/`pr` REFUSE to auto-WIP-commit (because the autogen `WIP: <slug>` message won't satisfy arbitrary rules). Commit your work yourself with a message that passes.
+
+Bypass: `forktrust finish --no-summary` (stderr warn). Standalone preview: `forktrust summary <slug> --check`.
+
+Full reference: [summary.md](./summary.md).
+
+Plus `exit code 19`. See [exit-codes.md](./exit-codes.md#19--summary-contract-violated).
+
 ## Future sections (planned)
 
 These are documented in the [roadmap](../README.md#roadmap) but not implemented yet:
 
-- `[scope]` / `--scope` flag (v0.7.3) — restrict which paths the worktree may modify.
-- `[summary]` (v0.7.6) — schema for the post-task summary requirement.
 - `[[process]]` (v0.9.0) — declare a dev server for `forktrust up/down/logs/web`.
 
 Schema for these will be additive — existing configs keep working.

@@ -3,6 +3,8 @@ package cli
 import (
 	"encoding/json"
 	"os"
+
+	"github.com/binkovsky/forktrust/internal/summary"
 )
 
 // finishResult is the stable JSON schema for `forktrust finish [--json]`.
@@ -52,7 +54,21 @@ type finishResult struct {
 	ScopeViolations     []string `json:"scope_violations,omitempty"`
 	ScopeViolationCount int      `json:"scope_violation_count,omitempty"`
 	NoScope             bool     `json:"no_scope,omitempty"`
-	Merged              bool     `json:"merged"`
+	// Summary gate (v0.7.7). Same shape contract as scope/verify:
+	//   - SummaryConfigured: .forktrustconfig has a [summary] section
+	//   - SummaryChecked: the gate was evaluated (false on --no-summary, no config)
+	//   - SummaryPassed: every commit in range satisfies every rule
+	//   - SummaryCommits: number of commits inspected (informational)
+	//   - SummaryViolations: list of rule failures (truncated; full count in SummaryViolationCount)
+	//   - NoSummary: --no-summary bypassed the gate
+	SummaryConfigured     bool                `json:"summary_configured"`
+	SummaryChecked        bool                `json:"summary_checked"`
+	SummaryPassed         bool                `json:"summary_passed"`
+	SummaryCommits        int                 `json:"summary_commits,omitempty"`
+	SummaryViolations     []summary.Violation `json:"summary_violations,omitempty"`
+	SummaryViolationCount int                 `json:"summary_violation_count,omitempty"`
+	NoSummary             bool                `json:"no_summary,omitempty"`
+	Merged                bool                `json:"merged"`
 	Pushed              bool     `json:"pushed"`
 	WorktreeRemoved     bool     `json:"worktree_removed"`
 	BranchDeleted       bool     `json:"branch_deleted"`
@@ -108,6 +124,14 @@ type prResult struct {
 	ScopeViolations     []string `json:"scope_violations,omitempty"`
 	ScopeViolationCount int      `json:"scope_violation_count,omitempty"`
 	NoScope             bool     `json:"no_scope,omitempty"`
+	// Summary gate (v0.7.7) — same shape as finishResult.
+	SummaryConfigured     bool                `json:"summary_configured"`
+	SummaryChecked        bool                `json:"summary_checked"`
+	SummaryPassed         bool                `json:"summary_passed"`
+	SummaryCommits        int                 `json:"summary_commits,omitempty"`
+	SummaryViolations     []summary.Violation `json:"summary_violations,omitempty"`
+	SummaryViolationCount int                 `json:"summary_violation_count,omitempty"`
+	NoSummary             bool                `json:"no_summary,omitempty"`
 
 	// PR-specific.
 	WouldRefuse      string `json:"would_refuse,omitempty"`

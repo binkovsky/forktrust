@@ -81,6 +81,13 @@ copy of the codebase so concurrent agents do not step on each other.
   ` + "`finish`" + ` REFUSES (exit 16) if the diff touches files outside the declared
   globs. JSON shows ` + "`scope_violations`" + ` (list) and ` + "`scope_violation_count`" + `.
   ` + "`--no-scope`" + ` bypass with warning; agents must NOT bypass without consent.
+- **Summary gate (commit-message contract):** if ` + "`.forktrustconfig`" + ` declares
+  ` + "`[summary]`" + ` rules (subject prefix, body length, ticket regex, forbidden
+  patterns), ` + "`finish`" + ` and ` + "`pr`" + ` REFUSE (exit 19) on violation. Includes an
+  auto-WIP refusal: if a contract is declared and the worktree is dirty,
+  forktrust refuses to auto-commit ` + "`WIP: <slug>`" + ` (it would never satisfy
+  arbitrary rules); you must commit yourself. ` + "`--no-summary`" + ` bypass with
+  warning; agents must NOT bypass without consent.
 - **PR mode (review workflow):** ` + "`forktrust pr <slug>`" + ` pushes the branch and
   opens a GitHub PR via ` + "`gh`" + ` instead of merging locally. Same pre-flight as
   finish (verify + scope), plus a check that ` + "`gh`" + ` is available + authenticated.
@@ -121,6 +128,7 @@ Exit codes are stable across releases. Switch on them, not on stderr text:
 | 16 | scope contract violated (diff touches files outside declared --scope) | surface ` + "`scope_violations`" + ` to user; NEVER ` + "`--no-scope`" + ` without consent |
 | 17 | ` + "`gh`" + ` CLI not available (not installed or not authenticated) | tell user to install ` + "`gh`" + ` (` + "`brew install gh`" + `) or run ` + "`gh auth login`" + ` |
 | 18 | ` + "`gh pr create`" + ` failed | surface ` + "`gh`" + ` stderr; do not blind-retry |
+| 19 | [summary] contract violated (commit messages, or auto-WIP under contract) | surface ` + "`summary_violations`" + ` to user; amend commits or ask user; NEVER ` + "`--no-summary`" + ` without consent |
 
 ### Inspecting state
 
@@ -165,7 +173,8 @@ spawn a subshell inside the worktree (with ` + "`FORKTRUST_SLUG`" + ` exported).
 | ` + "`forktrust scope <slug>`" + ` | Show / set / clear / check change-contract scope |
 | ` + "`forktrust pr <slug>`" + ` | Open a GitHub PR via ` + "`gh`" + ` instead of direct merge (worktree stays alive) |
 | ` + "`forktrust pr-status <slug>`" + ` | Show PR status: CI / approvals / mergeable |
-| ` + "`forktrust mcp`" + ` | Run as MCP stdio server (10 typed tools for Claude Code / Cursor) |
+| ` + "`forktrust summary <slug>`" + ` | Show or check the [summary] commit-message contract |
+| ` + "`forktrust mcp`" + ` | Run as MCP stdio server (11 typed tools for Claude Code / Cursor) |
 | ` + "`forktrust trust`" + ` | Approve this repo's ` + "`.forktrustconfig`" + ` command hooks |
 | ` + "`forktrust doctor`" + ` | Health check (origin, main ref, hooks, ports) |
 

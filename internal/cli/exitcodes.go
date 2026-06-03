@@ -22,6 +22,7 @@ const (
 	ExitScopeViolation    = 16 // finish/scope-check refused: the worktree's diff touches files outside the declared scope (change contract violation)
 	ExitGhNotAvailable    = 17 // pr/pr-status: gh CLI not installed in PATH, or not authenticated (run `gh auth login`)
 	ExitPRCreateFailed    = 18 // pr: `gh pr create` returned non-zero (network, permissions, validation)
+	ExitSummaryViolation  = 19 // finish/pr/summary-check refused: one or more commits violate the .forktrustconfig [summary] contract
 )
 
 // CodedError carries a structured exit code through cobra's error path.

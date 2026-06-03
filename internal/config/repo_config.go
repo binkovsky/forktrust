@@ -37,9 +37,54 @@ const RepoConfigFile = ".forktrustconfig"
 // worktree. Hooks run in declared order; if one fails, subsequent hooks are
 // skipped and the worktree is left in place for inspection.
 type RepoConfig struct {
-	Hooks  Hooks         `toml:"hooks"`
-	Ports  *PortsConfig  `toml:"ports,omitempty"`
-	Verify *VerifyConfig `toml:"verify,omitempty"`
+	Hooks   Hooks          `toml:"hooks"`
+	Ports   *PortsConfig   `toml:"ports,omitempty"`
+	Verify  *VerifyConfig  `toml:"verify,omitempty"`
+	Summary *SummaryConfig `toml:"summary,omitempty"`
+}
+
+// SummaryConfig declares a contract over the commit messages introduced by a
+// worktree. When present, `forktrust finish` (and `forktrust pr`) enforce it
+// in pre-flight after verify and scope; non-compliance returns exit 19
+// (ExitSummaryViolated) with `summary_violations` in the JSON envelope.
+//
+// Bypass with `--no-summary` (prints a stderr warning).
+//
+// Example:
+//
+//	[summary]
+//	required               = true
+//	min_body_length        = 20
+//	max_body_length        = 2000
+//	require_subject_prefix = ["feat", "fix", "refactor", "docs", "chore", "test", "perf", "build", "ci", "style", "revert"]
+//	require_ticket_pattern = "[A-Z]+-[0-9]+"
+//	forbidden_patterns     = ["TODO", "WIP", "TBD"]
+//
+// All checks apply to EVERY commit in the worktree-vs-main range. The first
+// commit to violate any rule produces a violation entry; all violations are
+// collected before exit (no early-return).
+type SummaryConfig struct {
+	// Required: if true, the worktree must have at least one commit ahead of
+	// main. (Empty branches are already rejected upstream, but this makes the
+	// invariant explicit.)
+	Required bool `toml:"required,omitempty"`
+	// MinBodyLength is the minimum number of bytes in each commit's body
+	// (everything after the subject + blank-line separator). Zero disables.
+	// Subject-only commits have body length 0 and fail this check when > 0.
+	MinBodyLength int `toml:"min_body_length,omitempty"`
+	// MaxBodyLength caps the body. Zero disables.
+	MaxBodyLength int `toml:"max_body_length,omitempty"`
+	// RequireSubjectPrefix: subject must start with one of these prefixes
+	// followed by optional "(scope)" and a colon-space. Conventional Commits
+	// style. Empty disables.
+	RequireSubjectPrefix []string `toml:"require_subject_prefix,omitempty"`
+	// RequireTicketPattern is a Go regex that must match somewhere in the
+	// commit message (subject or body). Empty disables. Compiled at Validate().
+	RequireTicketPattern string `toml:"require_ticket_pattern,omitempty"`
+	// ForbiddenPatterns: substring matches (case-insensitive) that fail the
+	// commit if found anywhere in subject or body. Useful to reject "WIP",
+	// "TODO", "fixup!", etc. Empty list disables.
+	ForbiddenPatterns []string `toml:"forbidden_patterns,omitempty"`
 }
 
 // VerifyConfig declares commands that MUST exit zero before `forktrust finish`
@@ -193,6 +238,32 @@ func (c *RepoConfig) Validate() error {
 		}
 		if c.Verify.TimeoutSeconds < 0 {
 			return fmt.Errorf("[verify].timeout_seconds must be >= 0 (got %d); set to 0 to disable, or a positive number of seconds", c.Verify.TimeoutSeconds)
+		}
+	}
+	if c.Summary != nil {
+		if c.Summary.MinBodyLength < 0 {
+			return fmt.Errorf("[summary].min_body_length must be >= 0 (got %d)", c.Summary.MinBodyLength)
+		}
+		if c.Summary.MaxBodyLength < 0 {
+			return fmt.Errorf("[summary].max_body_length must be >= 0 (got %d)", c.Summary.MaxBodyLength)
+		}
+		if c.Summary.MaxBodyLength > 0 && c.Summary.MinBodyLength > c.Summary.MaxBodyLength {
+			return fmt.Errorf("[summary].min_body_length (%d) > max_body_length (%d): no valid commit body would pass", c.Summary.MinBodyLength, c.Summary.MaxBodyLength)
+		}
+		for i, p := range c.Summary.RequireSubjectPrefix {
+			if p == "" {
+				return fmt.Errorf("[summary].require_subject_prefix[%d] is empty; remove it or replace with a real prefix", i)
+			}
+		}
+		if c.Summary.RequireTicketPattern != "" {
+			if _, err := regexp.Compile(c.Summary.RequireTicketPattern); err != nil {
+				return fmt.Errorf("[summary].require_ticket_pattern is not a valid Go regex: %w", err)
+			}
+		}
+		for i, p := range c.Summary.ForbiddenPatterns {
+			if p == "" {
+				return fmt.Errorf("[summary].forbidden_patterns[%d] is empty; remove it or replace with a real substring", i)
+			}
 		}
 	}
 	return nil
