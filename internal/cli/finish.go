@@ -105,10 +105,15 @@ func runFinish(_ *cobra.Command, args []string) error {
 	}
 	r.UncommittedFiles = dirty
 
-	// Only fetch if we have origin; otherwise rev-list against origin/main
-	// would crash with "ambiguous argument" downstream.
+	// Fetch origin/<main> so the aheadRef cascade and CommitsAhead reason
+	// against the latest state. Soft-fail with a stderr warning so the user
+	// knows we may be working off stale refs (e.g. offline, auth expired) —
+	// silent failure here previously caused 'non-fast-forward' push failures
+	// AFTER local merge had already landed. Skipped when no origin.
 	if git.HasOrigin(proj.Path) {
-		_, _ = git.Run(proj.Path, "fetch", "-q", "origin", mainBranch)
+		if _, ferr := git.Run(proj.Path, "fetch", "-q", "origin", mainBranch); ferr != nil && !finishJSON {
+			fmt.Fprintf(os.Stderr, "WARN: `git fetch origin %s` failed (%v); proceeding against possibly stale ref. If push later fails non-fast-forward, restore connectivity and re-run finish.\n", mainBranch, ferr)
+		}
 	}
 
 	if finishDryRun {
@@ -207,6 +212,10 @@ func runFinish(_ *cobra.Command, args []string) error {
 	// Skipped under --no-scope (with stderr warning) or when no scope file exists.
 	scopeR, scopeErr := evalScope(proj.Path, wtPath, slug, aheadRef)
 	if scopeErr != nil {
+		// Emit JSON envelope with partial state so --json consumers always
+		// get a parseable document on stdout even when scope load fails
+		// (e.g. malformed scope TOML). Same contract as verify-failure path.
+		_ = emitFinish(r)
 		return scopeErr
 	}
 	r.ScopeConfigured = scopeR.Configured
@@ -262,6 +271,7 @@ func runFinish(_ *cobra.Command, args []string) error {
 	}
 	ahead, err := git.CommitsAhead(wtPath, aheadRef)
 	if err != nil {
+		_ = emitFinish(r) // preserve --json envelope contract
 		return err
 	}
 	r.CommitsAhead = ahead

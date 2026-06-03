@@ -68,6 +68,10 @@ type VerifyConfig struct {
 	Commands []string `toml:"commands"`
 	// RequireClean: if true, refuse if the worktree is dirty after verify runs.
 	RequireClean bool `toml:"require_clean,omitempty"`
+	// TimeoutSeconds bounds EACH command's wall-clock duration. Default 600
+	// (10 minutes per command). Set to 0 explicitly to disable the timeout
+	// (not recommended — a hung verify command blocks finish indefinitely).
+	TimeoutSeconds int `toml:"timeout_seconds,omitempty"`
 }
 
 // PortsConfig declares an aligned port-block allocation policy for this repo.
@@ -186,6 +190,9 @@ func (c *RepoConfig) Validate() error {
 			if cmd == "" {
 				return fmt.Errorf("[verify].commands[%d] is empty; remove it or replace with a real shell command", i)
 			}
+		}
+		if c.Verify.TimeoutSeconds < 0 {
+			return fmt.Errorf("[verify].timeout_seconds must be >= 0 (got %d); set to 0 to disable, or a positive number of seconds", c.Verify.TimeoutSeconds)
 		}
 	}
 	return nil

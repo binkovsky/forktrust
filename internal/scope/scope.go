@@ -163,8 +163,12 @@ func Check(allowed, changed []string) []string {
 }
 
 func anyMatch(globs []string, path string) bool {
+	// Use doublestar.Match (always forward-slash) rather than PathMatch (which
+	// switches to OS separator on Windows). Paths are normalized to forward
+	// slashes upstream in Check(); both globs and paths must use the same
+	// separator semantics or every match returns false on Windows.
 	for _, g := range globs {
-		ok, err := doublestar.PathMatch(g, path)
+		ok, err := doublestar.Match(g, path)
 		if err == nil && ok {
 			return true
 		}

@@ -180,11 +180,18 @@ func checkGhInstalled() doctorCheck {
 	out, err := exec.Command("gh", "--version").Output()
 	if err != nil {
 		return doctorCheck{Name: "gh", Scope: "global", Status: statusWarn,
-			Message: "gh CLI not installed (optional; needed for PR mode in v0.7.4+)",
+			Message: "gh CLI not installed (needed for forktrust pr / pr-status — v0.7.4+)",
 			Hint:    "install with `brew install gh`"}
 	}
 	first := strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
-	return doctorCheck{Name: "gh", Scope: "global", Status: statusOK, Message: first}
+	// Also probe authentication — having `gh` installed but unauthenticated
+	// is a common source of confusion when `forktrust pr` fails at runtime.
+	if authOut, authErr := exec.Command("gh", "auth", "status").CombinedOutput(); authErr != nil {
+		return doctorCheck{Name: "gh", Scope: "global", Status: statusWarn,
+			Message: first + " (installed but NOT authenticated)",
+			Hint:    "run `gh auth login` — without it, `forktrust pr` will exit 17. Details: " + truncateOutput(strings.TrimSpace(string(authOut)), 200)}
+	}
+	return doctorCheck{Name: "gh", Scope: "global", Status: statusOK, Message: first + " (authenticated)"}
 }
 
 func checkBrewFreshness() doctorCheck {
@@ -226,6 +233,11 @@ func checkPortsStore() doctorCheck {
 
 func checkProject(rep *doctorReport, p config.Project) {
 	scope := p.Name
+
+	// 0. .forktrust/scopes/ orphan check (v0.7.3+).
+	if cFound := checkScopesDir(p.Name, p.Path); cFound.Name != "" {
+		rep.add(cFound)
+	}
 
 	// 1. Repo path exists and is a git directory.
 	if _, err := os.Stat(filepath.Join(p.Path, ".git")); err != nil {
@@ -283,7 +295,18 @@ func checkProject(rep *doctorReport, p config.Project) {
 		if repoCfg.Ports != nil {
 			msg += "; ports configured"
 		}
+		if repoCfg.Verify != nil {
+			msg += fmt.Sprintf("; [verify] %d command(s)", len(repoCfg.Verify.Commands))
+		}
 		rep.add(doctorCheck{Name: "repo-config", Scope: scope, Status: statusOK, Message: msg})
+
+		// 5a. Verify config sanity (commands actually look runnable).
+		// Validate.LoadRepoConfig already rejected empty commands; here we
+		// surface commands that look like a typo or a missing binary, since
+		// the cost of a typo is a finish-time exit 15 deep into the pipeline.
+		if repoCfg.Verify != nil {
+			rep.add(checkVerifyConfig(p.Name, repoCfg.Verify))
+		}
 
 		// 5. If command hooks exist, check trust.
 		if repoCfg.HasCommandHooks() {
@@ -301,4 +324,116 @@ func checkProject(rep *doctorReport, p config.Project) {
 			}
 		}
 	}
+}
+
+// checkVerifyConfig surfaces v0.7.2 [verify] section sanity issues that
+// LoadRepoConfig.Validate accepts but a user would want to know about:
+//   - the first token of each command exists on PATH (catches `npm tset` typo)
+//   - timeout_seconds is sane (default if absent; warning if extremely small)
+// We do NOT execute the commands — that would be a side effect, and Doctor
+// must remain a pure read.
+func checkVerifyConfig(projName string, v *config.VerifyConfig) doctorCheck {
+	type bad struct {
+		idx int
+		cmd string
+		why string
+	}
+	var bads []bad
+	for i, cmd := range v.Commands {
+		// Take the first word; if it contains '/', it's a path — skip the
+		// existence check (would require resolving relative-to-worktree).
+		trimmed := strings.TrimSpace(cmd)
+		if trimmed == "" {
+			bads = append(bads, bad{i, cmd, "command is empty/whitespace"})
+			continue
+		}
+		first := strings.Fields(trimmed)[0]
+		if strings.ContainsAny(first, "$&|;`<>(){}*?") {
+			// Shell metacharacters — heuristic check would lie; skip.
+			continue
+		}
+		if strings.ContainsRune(first, '/') {
+			continue
+		}
+		if _, err := exec.LookPath(first); err != nil {
+			bads = append(bads, bad{i, cmd, fmt.Sprintf("first token %q not in PATH", first)})
+		}
+	}
+	if len(bads) > 0 {
+		// Build a concise list (cap at 3 for the message).
+		var b strings.Builder
+		for i, x := range bads {
+			if i > 0 {
+				b.WriteString("; ")
+			}
+			if i == 3 {
+				fmt.Fprintf(&b, "... and %d more", len(bads)-3)
+				break
+			}
+			fmt.Fprintf(&b, "commands[%d]: %s", x.idx, x.why)
+		}
+		return doctorCheck{Name: "verify-config", Scope: projName, Status: statusWarn,
+			Message: b.String(),
+			Hint:    "test the command manually with `forktrust exec <slug> -- <cmd>` before relying on it; finish/pr will exit 15 on a runtime failure"}
+	}
+	if v.TimeoutSeconds > 0 && v.TimeoutSeconds < 5 {
+		return doctorCheck{Name: "verify-config", Scope: projName, Status: statusWarn,
+			Message: fmt.Sprintf("[verify].timeout_seconds = %d is very short; most test suites need more", v.TimeoutSeconds),
+			Hint:    "raise to a realistic value (default is 600 = 10min per command)"}
+	}
+	msg := fmt.Sprintf("%d command(s) look runnable", len(v.Commands))
+	if v.RequireClean {
+		msg += "; require_clean"
+	}
+	return doctorCheck{Name: "verify-config", Scope: projName, Status: statusOK, Message: msg}
+}
+
+// checkScopesDir enumerates <repoPath>/.forktrust/scopes/*.toml and reports
+// scope files that no longer correspond to an existing worktree
+// (.forktrust/worktrees/<slug>/). These are "orphan" scopes left over after
+// a manual `rm -rf` of the worktree, and they will silently re-attach to a
+// future `forktrust new <same-slug>` — a documented confusion source.
+// Returns an empty doctorCheck (Name=="") when no scopes dir exists.
+func checkScopesDir(projName, repoPath string) doctorCheck {
+	scopesDir := filepath.Join(repoPath, ".forktrust", "scopes")
+	entries, err := os.ReadDir(scopesDir)
+	if err != nil {
+		// Missing dir is fine; means no scopes have ever been created.
+		return doctorCheck{}
+	}
+	wtDir := filepath.Join(repoPath, ".forktrust", "worktrees")
+	var orphans []string
+	scopeCount := 0
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".toml") {
+			continue
+		}
+		scopeCount++
+		slug := strings.TrimSuffix(name, ".toml")
+		if _, err := os.Stat(filepath.Join(wtDir, slug)); err != nil {
+			orphans = append(orphans, slug)
+		}
+	}
+	if len(orphans) > 0 {
+		var b strings.Builder
+		for i, slug := range orphans {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i == 5 {
+				fmt.Fprintf(&b, "... and %d more", len(orphans)-5)
+				break
+			}
+			b.WriteString(slug)
+		}
+		return doctorCheck{Name: "scopes-dir", Scope: projName, Status: statusWarn,
+			Message: fmt.Sprintf("%d orphan scope file(s): %s", len(orphans), b.String()),
+			Hint:    "these will re-attach to future `forktrust new <slug>` with the same slug; remove with `rm .forktrust/scopes/<slug>.toml` or use `forktrust scope <slug> --clear` after `forktrust new`"}
+	}
+	if scopeCount == 0 {
+		return doctorCheck{}
+	}
+	return doctorCheck{Name: "scopes-dir", Scope: projName, Status: statusOK,
+		Message: fmt.Sprintf("%d scope file(s); all attached to live worktrees", scopeCount)}
 }

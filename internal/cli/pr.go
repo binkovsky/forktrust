@@ -135,7 +135,9 @@ func runPR(_ *cobra.Command, args []string) error {
 	}
 
 	// Make sure we have the latest origin refs for the aheadRef cascade.
-	_, _ = git.Run(proj.Path, "fetch", "-q", "origin", mainBranch)
+	if _, ferr := git.Run(proj.Path, "fetch", "-q", "origin", mainBranch); ferr != nil && !prJSON {
+		fmt.Fprintf(os.Stderr, "WARN: `git fetch origin %s` failed (%v); proceeding against possibly stale ref.\n", mainBranch, ferr)
+	}
 
 	// aheadRef cascade — same logic as finish.
 	aheadRef := ""
@@ -146,6 +148,24 @@ func runPR(_ *cobra.Command, args []string) error {
 		aheadRef = mainBranch
 	default:
 		return coded(ExitAheadUnknown, fmt.Errorf("no main reference resolved (tried origin/%s, %s)", mainBranch, mainBranch))
+	}
+
+	// ahead==0 guard: when the worktree has no uncommitted work AND no commits
+	// ahead of base, there is nothing to open a PR for. Without this guard pr
+	// would (a) skip auto-WIP (dirty==0), (b) push an empty branch update,
+	// (c) call `gh pr create` which fails with a cryptic "no commits between
+	// <base> and <head>" — exit 18 with no actionable message.
+	// (When dirty > 0, the auto-WIP commit at line ~225 will make ahead > 0,
+	// so this check only fires for a genuinely empty worktree.)
+	if dirty == 0 {
+		ahead, aheadErr := git.CommitsAhead(wtPath, aheadRef)
+		if aheadErr == nil && ahead == 0 {
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintf(os.Stderr, "REFUSE: worktree %q has 0 uncommitted changes and 0 commits ahead of %s.\n", slug, aheadRef)
+			fmt.Fprintln(os.Stderr, "There is nothing to open a PR for. Either make changes, or use `forktrust rm "+slug+"` to clean up.")
+			_ = emitPR(r)
+			return coded(ExitAheadUnknown, fmt.Errorf("nothing to PR: 0 ahead, 0 dirty"))
+		}
 	}
 
 	// Verify gate.
@@ -236,9 +256,15 @@ func runPR(_ *cobra.Command, args []string) error {
 	// If a PR already exists for this branch, just look it up.
 	existing, err := ghPRView(wtPath, branch)
 	if err != nil {
+		_ = emitPR(r) // preserve --json envelope contract (branch IS pushed)
 		return coded(ExitPRCreateFailed, err)
 	}
-	if existing != nil {
+	// `gh pr view <branch>` returns the most recent PR for the branch
+	// regardless of state (OPEN/CLOSED/MERGED). Only OPEN PRs are "still
+	// receiving updates" — for CLOSED/MERGED, the user has new work and
+	// wants a fresh PR. Treating a closed PR as "already open" misleads
+	// agents (PRExisted=true, PRCreated=false but the PR is dead).
+	if existing != nil && strings.ToUpper(existing.State) == "OPEN" {
 		r.PRExisted = true
 		r.PRCreated = false
 		r.PRNumber = existing.Number
@@ -249,6 +275,10 @@ func runPR(_ *cobra.Command, args []string) error {
 		prNotef("PR already open: #%d %s", existing.Number, existing.URL)
 		printPRBlock(r)
 		return emitPR(r)
+	}
+	if existing != nil {
+		// State is CLOSED or MERGED — fall through to create a fresh PR.
+		prNotef("previous PR #%d is %s; opening a new PR for the latest commits", existing.Number, existing.State)
 	}
 
 	// Generate title and body if not provided.
@@ -267,6 +297,7 @@ func runPR(_ *cobra.Command, args []string) error {
 	prNotef("creating PR: %s -> %s", branch, baseBranch)
 	url, err := ghPRCreate(wtPath, baseBranch, branch, title, body, prDraft)
 	if err != nil {
+		_ = emitPR(r) // preserve --json envelope contract (branch IS pushed)
 		return coded(ExitPRCreateFailed, err)
 	}
 	r.PRCreated = true
@@ -368,8 +399,20 @@ func autoTitleBody(wtPath, aheadRef, slug string) (string, string) {
 			lines = append(lines, l)
 		}
 	}
+	// Pick the title: prefer the most recent meaningful commit subject. We
+	// run after the auto-WIP commit (pr.go:218-224) which means lines[0] is
+	// often literally "WIP: <slug>" — a terrible PR title. Skip leading WIP-
+	// prefixed subjects so reviewers see the real work being shipped.
 	title := "forktrust: " + slug
-	if len(lines) > 0 {
+	for _, line := range lines {
+		if !isWIPSubject(line, slug) {
+			title = line
+			break
+		}
+	}
+	// If every subject is WIP-like, fall back to the most recent one rather
+	// than the generic placeholder; at least it identifies the slug.
+	if title == "forktrust: "+slug && len(lines) > 0 {
 		title = lines[0]
 	}
 
@@ -385,4 +428,26 @@ func autoTitleBody(wtPath, aheadRef, slug string) (string, string) {
 	}
 	b.WriteString("\n---\nOpened with [forktrust](https://github.com/binkovsky/forktrust) `pr " + slug + "`.\n")
 	return title, b.String()
+}
+
+// isWIPSubject reports whether a commit subject looks like an auto-generated
+// WIP commit. Used by autoTitleBody to skip these when picking a PR title.
+// Matches: "WIP: <slug>" (forktrust auto-WIP), "WIP <anything>", "wip <anything>",
+// and the explicit "WIP snapshot before worktree removal" prefix used by `rm`.
+func isWIPSubject(subject, slug string) bool {
+	s := strings.TrimSpace(subject)
+	if s == "" {
+		return true
+	}
+	if s == "WIP: "+slug {
+		return true
+	}
+	lower := strings.ToLower(s)
+	if strings.HasPrefix(lower, "wip:") || strings.HasPrefix(lower, "wip ") {
+		return true
+	}
+	if strings.HasPrefix(s, "WIP snapshot before worktree removal") {
+		return true
+	}
+	return false
 }
