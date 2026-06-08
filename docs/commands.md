@@ -298,7 +298,7 @@ forktrust mcp
 
 Reads newline-delimited JSON-RPC 2.0 requests from stdin and writes responses to stdout. Designed to be spawned by an MCP client (Claude Code, Cursor, etc.), not invoked interactively.
 
-11 tools exposed: `forktrust_list`, `forktrust_status`, `forktrust_new`, `forktrust_cd`, `forktrust_finish`, `forktrust_rm`, `forktrust_scope`, `forktrust_summary`, `forktrust_pr`, `forktrust_pr_status`, `forktrust_doctor`.
+13 tools exposed: `forktrust_list`, `forktrust_status`, `forktrust_new`, `forktrust_cd`, `forktrust_finish`, `forktrust_rm`, `forktrust_scope`, `forktrust_summary`, `forktrust_pr`, `forktrust_pr_status`, `forktrust_doctor`, `forktrust_init`, `forktrust_template_list`.
 
 Configure in Claude Code's `settings.json`:
 
@@ -550,6 +550,60 @@ forktrust config path                 # print path of the user config file
 `config add` rejects a path that resolves to the same canonical directory as an already-registered one (via `filepath.EvalSymlinks`). This prevents the "same repo registered twice under different names" footgun that breaks `resolveWorktree`.
 
 User config: `~/.config/forktrust/config.toml`.
+
+---
+
+## `forktrust init`
+
+Scaffold a starter `.forktrustconfig` in the current directory from a known template. See [templates.md](./templates.md) for the full template catalog.
+
+```
+forktrust init [--template <name>] [--force] [--show] [--json]
+```
+
+Without `--template`, auto-detects by inspecting cwd files (package.json with `next` dep → nextjs, `go.mod` → go-cli, `pyproject.toml` with `[tool.poetry]` → python-poetry, else minimal).
+
+| Flag | Effect |
+|---|---|
+| `--template <name>` | Pick explicitly. `forktrust template list` enumerates names. |
+| `--force` | Overwrite an existing `.forktrustconfig`. Without this, refuses with exit 1. |
+| `--show` | Print the chosen template to stdout instead of writing the file. |
+| `--json` | Emit a structured JSON object on stdout. |
+
+Examples:
+
+```bash
+forktrust init                          # auto-detect
+forktrust init --template nextjs-strict # explicit pick
+forktrust init --show --template strict-ai > .forktrustconfig.proposed
+forktrust init --json | jq -r .template
+```
+
+Exit codes:
+- 0 — wrote / printed
+- 1 — template not found, or `.forktrustconfig` already exists (no `--force`)
+
+---
+
+## `forktrust template list` / `forktrust template show <name>`
+
+Inspect available starter templates without writing anything to disk.
+
+```
+forktrust template list [--json]
+forktrust template show <name>
+```
+
+```bash
+forktrust template list                 # all 6 with descriptions
+forktrust template list --json | jq -r '.[].name'
+forktrust template show nextjs          # print to stdout
+forktrust template show strict-ai > policy.toml
+```
+
+Exit codes:
+- 0 — success
+- 1 — template not found (show only)
 
 ---
 

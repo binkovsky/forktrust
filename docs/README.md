@@ -16,6 +16,7 @@ Start here if you are a human using forktrust day-to-day:
 - **[PR mode (`forktrust pr`)](./pr.md)** — open a GitHub PR instead of merging locally; `pr-status` reports CI / approvals / mergeable.
 - **[MCP server (`forktrust mcp`)](./mcp.md)** — run as a Model Context Protocol stdio server so AI agents call forktrust as typed native tools.
 - **[Summary contract (`[summary]`)](./summary.md)** — declare commit-message rules (Conventional Commits prefixes, ticket regex, forbidden patterns); `finish` refuses on violation.
+- **[Templates and policy packs (`forktrust init`)](./templates.md)** — scaffold `.forktrustconfig` from a starter (nextjs / go-cli / python-poetry / strict-ai / minimal) with auto-detection.
 - **[Shell integration](./shell-integration.md)** — `ft` function, `forktrust shell`, prompt integration, autocomplete.
 - **[Troubleshooting](./troubleshooting.md)** — every error message and exit code mapped to a fix.
 

@@ -30,6 +30,6 @@ wip/<branch>-YYYYMMDD-HHMMSS-<sha7> before removing, so work is never lost.`,
 // Execute runs the root command.
 func Execute() error {
 	rootCmd.Version = version
-	rootCmd.AddCommand(newCmd, listCmd, finishCmd, rmCmd, configCmd, trustCmd, aiCmd, agentDocsCmd, execCmd, statusCmd, cdCmd, shellCmd, doctorCmd, scopeCmd, prCmd, prStatusCmd, mcpCmd, summaryCmd)
+	rootCmd.AddCommand(newCmd, listCmd, finishCmd, rmCmd, configCmd, trustCmd, aiCmd, agentDocsCmd, execCmd, statusCmd, cdCmd, shellCmd, doctorCmd, scopeCmd, prCmd, prStatusCmd, mcpCmd, summaryCmd, initCmd, templateCmd)
 	return rootCmd.Execute()
 }

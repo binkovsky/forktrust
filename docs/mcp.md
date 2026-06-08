@@ -21,7 +21,7 @@ Add to Claude Code's `settings.json`:
 
 Or to Cursor's `mcp.json`, or any other MCP-compliant client.
 
-After restart, the model sees ten typed tools (`forktrust_list`, `forktrust_new`, etc.) and calls them directly. No more `Bash("forktrust list --json | jq ...")` boilerplate.
+After restart, the model sees 13 typed tools (`forktrust_list`, `forktrust_new`, `forktrust_init`, etc.) and calls them directly. No more `Bash("forktrust list --json | jq ...")` boilerplate.
 
 ## What it does
 
@@ -29,7 +29,7 @@ After restart, the model sees ten typed tools (`forktrust_list`, `forktrust_new`
 - Reads newline-delimited JSON-RPC 2.0 requests from stdin.
 - Writes newline-delimited JSON-RPC 2.0 responses to stdout.
 - Speaks the [MCP 2024-11-05](https://spec.modelcontextprotocol.io/specification/2024-11-05/) protocol (initialize, tools/list, tools/call).
-- Exposes 11 tools, each a thin wrapper around the corresponding `forktrust <cmd> --json`.
+- Exposes 13 tools, each a thin wrapper around the corresponding `forktrust <cmd> --json`.
 
 It exits cleanly when stdin EOFs (i.e. when the client disconnects) or when it receives SIGINT/SIGTERM.
 
@@ -41,11 +41,14 @@ It exits cleanly when stdin EOFs (i.e. when the client disconnects) or when it r
 | `forktrust_status` | `status --json` | — | `project` |
 | `forktrust_new` | `new --json` | `slug` | `project`, `scope`, `from` |
 | `forktrust_cd` | `cd` | `slug` | `project` |
-| `forktrust_finish` | `finish --json` | `slug` | `project`, `message`, `dry_run`, `no_verify`, `no_scope` |
+| `forktrust_finish` | `finish --json` | `slug` | `project`, `message`, `dry_run`, `no_verify`, `no_scope`, `no_summary` |
 | `forktrust_rm` | `rm --json` | `slug` | `project`, `force`, `dry_run` |
 | `forktrust_scope` | `scope --json` | `slug` | `project`, `set`, `clear`, `check` (mutually exclusive) |
-| `forktrust_pr` | `pr --json` | `slug` | `project`, `title`, `body`, `base`, `draft`, `no_verify`, `no_scope`, `dry_run` |
+| `forktrust_summary` | `summary --json` | `slug` | `project`, `check` |
+| `forktrust_pr` | `pr --json` | `slug` | `project`, `title`, `body`, `base`, `draft`, `no_verify`, `no_scope`, `no_summary`, `dry_run` |
 | `forktrust_pr_status` | `pr-status --json` | `slug` | `project` |
+| `forktrust_init` | `init --json` | — | `template`, `force`, `show` |
+| `forktrust_template_list` | `template list --json` | — | — |
 | `forktrust_doctor` | `doctor --json` | — | `project` |
 
 Each tool returns a single `text` content block whose body is the forktrust JSON envelope. Tool errors (non-zero exit) set `isError: true` so the model sees the failure prominently; the JSON envelope is still parseable for programmatic consumers.

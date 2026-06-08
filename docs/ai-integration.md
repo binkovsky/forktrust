@@ -190,7 +190,7 @@ Configure in Claude Code's `settings.json`:
 }
 ```
 
-11 tools exposed (each wraps the corresponding `forktrust <cmd> --json`):
+13 tools exposed (each wraps the corresponding `forktrust <cmd> --json`):
 
 | Tool | What it does |
 |---|---|

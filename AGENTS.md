@@ -120,6 +120,7 @@ Then `ft <slug>` cd's into any worktree. See [docs/shell-integration.md](./docs/
 | PR mode (`pr`, `pr-status`) | [docs/pr.md](./docs/pr.md) |
 | MCP server (`forktrust mcp`) | [docs/mcp.md](./docs/mcp.md) |
 | Summary contract (`[summary]`) | [docs/summary.md](./docs/summary.md) |
+| Templates (`forktrust init`) | [docs/templates.md](./docs/templates.md) |
 | AI integration recipes | [docs/ai-integration.md](./docs/ai-integration.md) |
 | Shell integration | [docs/shell-integration.md](./docs/shell-integration.md) |
 

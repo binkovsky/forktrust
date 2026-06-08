@@ -154,6 +154,26 @@ var allTools = []tool{
 		},
 	},
 	{
+		Name:        "forktrust_init",
+		Description: "Scaffold a .forktrustconfig in the current directory from a starter template (v0.7.9). Auto-detects the template from cwd files (package.json with \"next\" dep → nextjs, go.mod → go-cli, pyproject.toml with [tool.poetry] → python-poetry, else minimal) unless `template` is given. Refuses if .forktrustconfig already exists unless `force=true`.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"template": optionalString("Template name; omit for auto-detect. See forktrust_template_list."),
+				"force":    boolSchema("Overwrite an existing .forktrustconfig."),
+				"show":     boolSchema("Print the chosen template instead of writing it (no filesystem mutation)."),
+			},
+		},
+	},
+	{
+		Name:        "forktrust_template_list",
+		Description: "List available .forktrustconfig starter templates with name + description + auto-detect signals.",
+		InputSchema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		},
+	},
+	{
 		Name:        "forktrust_summary",
 		Description: "Show or check the [summary] commit-message contract for a worktree (v0.7.7). Without check=true, prints the declared contract. With check=true, evaluates the worktree's commits against the contract; exit 19 if any commit violates a rule.",
 		InputSchema: map[string]any{
@@ -356,6 +376,22 @@ var handlers = map[string]handlerFunc{
 			a = append(a, "-p", v)
 		}
 		return runForktrust(ctx, binary, a...)
+	},
+	"forktrust_init": func(ctx context.Context, binary string, args map[string]any) (string, bool) {
+		a := []string{"init", "--json"}
+		if v, ok := stringArg(args, "template"); ok {
+			a = append(a, "--template", v)
+		}
+		if boolArg(args, "force") {
+			a = append(a, "--force")
+		}
+		if boolArg(args, "show") {
+			a = append(a, "--show")
+		}
+		return runForktrust(ctx, binary, a...)
+	},
+	"forktrust_template_list": func(ctx context.Context, binary string, _ map[string]any) (string, bool) {
+		return runForktrust(ctx, binary, "template", "list", "--json")
 	},
 	"forktrust_summary": func(ctx context.Context, binary string, args map[string]any) (string, bool) {
 		slug, ok := stringArg(args, "slug")

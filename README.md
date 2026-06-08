@@ -152,7 +152,7 @@ Any future edit to `.forktrustconfig` auto-revokes trust until you re-run `forkt
 | `forktrust scope <slug>` | Show / set / clear / check the change-contract scope for a worktree |
 | `forktrust pr <slug>` | Push branch + open GitHub PR (via `gh`) instead of direct merge |
 | `forktrust pr-status <slug>` | Show PR status (CI / approvals / mergeable) |
-| `forktrust mcp` | Run as a Model Context Protocol stdio server (11 typed tools) |
+| `forktrust mcp` | Run as a Model Context Protocol stdio server (13 typed tools) |
 | `forktrust doctor` | Health check (origin, main ref, hooks, ports, brew version) |
 | `forktrust trust [path]` | Approve `.forktrustconfig` command hooks for this repo |
 | `forktrust config add <path>` | Register a repo with forktrust |
@@ -236,12 +236,13 @@ Shipped in v0.7.2: **`[verify]` gate** — `finish` refuses to merge unless decl
 Shipped in v0.7.3: **Change contract (`--scope`)** — `forktrust new <slug> --scope "globs"` declares allowed paths; `finish` refuses out-of-scope edits (exit 16). New `forktrust scope <slug>` command (show / set / clear / check). `--no-scope` bypass.
 Shipped in v0.7.4: **PR mode** — `forktrust pr <slug>` opens a GitHub PR via `gh` instead of direct merge; `forktrust pr-status <slug>` reports CI / approvals / mergeable. Pre-flight reuse (verify + scope). New exit codes 17 (gh unavailable) + 18 (gh pr create failed).
 Shipped in v0.7.5: Adversarial-review hardening — Windows scope fix, verify ring buffer + timeout, autoTitleBody WIP skip, ghPRView state check, JSON envelope contract on all error paths, fetch-failure warning, pr ahead==0 guard, doctor coverage for verify/scope/gh-auth.
-Shipped in v0.7.6: **MCP server** — `forktrust mcp` runs as a Model Context Protocol stdio server; 11 typed tools (`forktrust_list`, `forktrust_new`, etc.) for Claude Code / Cursor / any MCP-speaking agent. JSON-RPC 2.0 + MCP 2024-11-05.
+Shipped in v0.7.6: **MCP server** — `forktrust mcp` runs as a Model Context Protocol stdio server; 13 typed tools (`forktrust_list`, `forktrust_new`, etc.) for Claude Code / Cursor / any MCP-speaking agent. JSON-RPC 2.0 + MCP 2024-11-05.
 Shipped in v0.7.7: **`[summary]` contract** — `finish` and `pr` refuse (exit 19) if any commit violates declared rules (subject prefix, body length, ticket regex, forbidden patterns). Closes the merge-gate trilogy: **verify** (tests) + **scope** (what) + **summary** (why). Auto-WIP is refused when a contract is declared so users write real messages. `--no-summary` bypass; new `forktrust summary <slug> --check` command.
+Shipped in v0.7.8: MCP `serverInfo.version` now flows from the build-time version string so the handshake reports the actual binary version instead of a stale constant.
+Shipped in v0.7.9: **Templates + policy packs** — `forktrust init` scaffolds `.forktrustconfig` from six shipped templates (minimal, nextjs, nextjs-strict, go-cli, python-poetry, strict-ai) with auto-detect by cwd files. New `forktrust template list/show` + two MCP tools (`forktrust_init`, `forktrust_template_list`). Templates are unit-validated against `RepoConfig.Validate()` so broken starters break CI.
 
 Next versions — positioning forktrust as the "merge gate for AI agents":
-- **v0.7.8 Templates + policy packs**: `forktrust new --template nextjs`, `forktrust policy init strict-ai`
-- **v0.8.0 Intelligence**: `forktrust plan-merge` (risk scoring), audit ledger, `rollback-info`
+- **v0.8.0 Intelligence**: `forktrust plan-merge` (conflict risk scoring), audit ledger `~/.forktrust/history.jsonl`, `rollback-info`
 - **v0.8.1 Secrets guard**: pre-finish diff scan for keys / tokens / .env
 - **v0.9.0 Runtime layer**: `forktrust up/down/logs/web <slug>` (process management)
 - **v1.0.0 TUI dashboard**: minimal `forktrust tui` (sessions, diff preview, approve/reject)
